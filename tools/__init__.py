@@ -669,7 +669,8 @@ def execute_tool(
         except Exception:
             _undo_seq = None
 
-    result = _registry_execute(name, inputs, cfg)
+    result = _registry_execute(name, inputs, cfg,
+                               max_output=cfg.get("max_tool_output", 32000))
 
     if _undo_seq is not None:
         try:
