@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promethean"
+version = "3.05.76"
+description = "Promethean: a full-stack autonomous coding & research agent for hardware you already own. Qwen3.5-9B with TurboQuant + TriAttention inference on 8 GB consumer GPUs, on a harness forked from cheetahclaws."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "anthropic>=0.40.0",
+    "openai>=1.30.0",
+    "httpx>=0.27.0",
+    "rich>=13.0.0",
+    "pyte>=0.8.0",
+    "PyYAML>=6.0",          # agent-template + plugin YAML frontmatter
+]
+
+# NOTE: `voice`/`video` pull torch (via openai-whisper) — pip installs the
+# CUDA build by default. On ROCm/CPU, install the matching torch wheel first.
+[project.optional-dependencies]
+voice       = ["sounddevice", "faster-whisper", "openai-whisper", "ctranslate2", "edge-tts", "torch"]
+vision      = ["Pillow"]
+autosuggest = ["prompt_toolkit>=3.0.43"]
+browser     = ["playwright"]
+files       = ["pymupdf", "openpyxl", "pypdf", "pdfminer.six", "python-docx"]
+ocr         = ["pytesseract", "Pillow"]
+video       = ["edge-tts", "imageio-ffmpeg", "faster-whisper", "torch", "pypdf", "pdfminer.six", "python-docx"]
+trading     = ["yfinance>=0.2.30", "rank-bm25>=0.2.2", "akshare"]
+research    = ["scholarly"]
+bridges     = ["qrcode"]
+data        = ["faker"]
+web         = ["sqlalchemy>=2.0", "bcrypt>=4.0", "PyJWT>=2.8.0"]
+# tree-sitter-language-pack is capped <1.8: 1.8.x ships a custom builtins.Parser
+# whose .parse() wants str (not bytes) and breaks the vendored aider repomap.
+graph       = ["diskcache>=5", "grep-ast>=0.9", "pygments>=2", "tree-sitter>=0.25,<0.26", "tree-sitter-language-pack>=1.6,<1.8", "networkx>=3", "numpy", "scipy"]
+dev         = ["pytest"]
+all         = ["sounddevice", "faster-whisper", "openai-whisper", "ctranslate2", "edge-tts", "torch", "Pillow", "prompt_toolkit>=3.0.43", "playwright", "pymupdf", "openpyxl", "pypdf", "pdfminer.six", "python-docx", "pytesseract", "imageio-ffmpeg", "yfinance>=0.2.30", "rank-bm25>=0.2.2", "akshare", "scholarly", "qrcode", "faker", "sqlalchemy>=2.0", "bcrypt>=4.0", "PyJWT>=2.8.0", "diskcache>=5", "grep-ast>=0.9", "pygments>=2", "tree-sitter>=0.25,<0.26", "tree-sitter-language-pack>=1.6,<1.8", "networkx>=3", "numpy", "scipy"]
+
+[project.scripts]
+promethean = "promethean:main"
+
+[tool.setuptools]
+py-modules = [
+    "promethean",
+    "agent",
+    "agent_runner",
+    "auxiliary",
+    "bootstrap",
+    "circuit_breaker",
+    "cloudsave",
+    "compaction",
+    "cc_config",
+    "context",
+    "error_classifier",
+    "health",
+    "jobs",
+    "llama_slots",
+    "logging_utils",
+    "memory",
+    "providers",
+    "quota",
+    "runtime",
+    "search_tokenize",
+    "session_store",
+    "skills",
+    "subagent",
+    "tmux_tools",
+    "tool_registry",
+]
+packages = [
+    "tools",
+    "cc_mcp", "memory", "monitor", "multi_agent", "plugin", "skill", "task",
+    "voice", "video", "checkpoint",
+    "ui", "web", "bridges", "commands",
+    "rabbit_hole",
+    "research", "research.sources",
+    "prompts",
+    "modular", "modular.video", "modular.voice", "modular.trading",
+    "modular.trading.data", "modular.trading.engines", "modular.trading.agents",
+]
+
+[tool.setuptools.package-data]
+"web" = ["*.js", "*.css", "*.html", "*.ico", "*.png", "static/js/*.js", "static/*.png", "static/*.ico"]
+"prompts" = ["base/*.md", "overlays/*.md", "fragments/*.md", "README.md"]
+"modular.video" = ["PLUGIN.md"]
+"modular.voice" = ["PLUGIN.md"]
+"modular.trading" = ["PLUGIN.md", "skills/*.md", "agent_templates/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "e2e_*.py"]
+asyncio_default_fixture_loop_scope = "function"

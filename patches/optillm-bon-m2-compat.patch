@@ -1,0 +1,52 @@
+From: alex <alexhergomz@gmail.com>
+Date: 2026-05-13
+Subject: [PATCH] bon: avoid mid-conversation system role for strict providers
+
+MiniMax-M2 (and likely future strict providers) rejects `role: system`
+when it appears after the first message in the conversation. BoN's
+rating loop today builds:
+
+    [system, user, system, assistant, user, assistant, user, ...]
+
+The second `system` (the rating instruction) trips M2 with:
+
+    invalid params, chat content has invalid message role: system (2013)
+
+Fix: fold the rating instruction into the per-completion user message
+that already asks the model to rate it. The behavior is functionally
+identical for accepting providers (the instruction is still injected
+once before each rating call) and unlocks BoN on M2-class providers.
+
+No new dependencies. Net diff is small.
+
+Validated: BoN of 3 against MiniMax-M2 now completes with a winning
+completion selected rather than 500-ing at the rating step.
+
+---
+ optillm/bon.py | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/optillm/bon.py b/optillm/bon.py
+index 0000000..0000000 100644
+--- a/optillm/bon.py
++++ b/optillm/bon.py
+@@ -94,13 +94,14 @@
+
+     # Rate the completions
+     rating_messages = messages.copy()
+-    rating_messages.append({"role": "system", "content": "Rate the following responses on a scale from 0 to 10, where 0 is poor and 10 is excellent. Consider factors such as relevance, coherence, and helpfulness. Respond with only a number."})
+
+     ratings = []
+     for completion in completions:
+         rating_messages.append({"role": "assistant", "content": completion})
+-        rating_messages.append({"role": "user", "content": "Rate the above response:"})
+-
++        rating_messages.append({"role": "user", "content": (
++            "Rate the above response on a scale from 0 to 10, where 0 is "
++            "poor and 10 is excellent. Consider factors such as relevance, "
++            "coherence, and helpfulness. Respond with only a number."
++        )})
++
+         provider_request = {
+             "model": model,
+             "messages": rating_messages,

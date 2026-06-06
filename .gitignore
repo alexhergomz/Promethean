@@ -1,0 +1,43 @@
+# Python build / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Local config / runtime artifacts
+debug_payload.json
+brainstorm_outputs/
+reference/
+.aider.tags.cache.v4/
+.aider.cache/
+.qcoder-server.pid
+*.log
+*.bak
+*.bak.*
+
+# Aider tag cache (sqlite — rebuilt automatically per repo)
+.aider.tags.cache.*
+
+# Backup conf files
+*.bak.20*
+
+# Brand identity source (internal design doc — never in the public repo)
+*brand-identity*.pdf
+promethean-brand-identity*
