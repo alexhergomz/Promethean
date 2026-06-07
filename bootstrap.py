@@ -58,6 +58,16 @@ def bootstrap(config: dict) -> None:
         except Exception as exc:
             _log.warn("health_server_failed", error=str(exc)[:200])
 
+    # ── 4. Local inference server ──────────────────────────────────────────
+    # If the active model is served by a local llama-server (provider custom
+    # on a loopback address) and it isn't up yet, start it. Best-effort and a
+    # no-op for remote/cloud providers; see server_autostart for config keys.
+    try:
+        from server_autostart import ensure_local_server
+        ensure_local_server(config)
+    except Exception as exc:
+        _log.debug("autostart_step_skipped", error=str(exc)[:200])
+
     _bootstrapped = True
     _log.info("bootstrap_done")
 

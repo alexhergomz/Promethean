@@ -44,6 +44,17 @@ DEFAULTS = {
     "thinking":         None,
     "thinking_budget":  10000,
     "custom_base_url":  "",       # for "custom" provider
+    # ── Local llama-server autostart ──────────────────────────────────────
+    # When the active model is a local llama-server (provider "custom" on a
+    # loopback custom_base_url) and it isn't running, bootstrap starts it so
+    # `promethean` is one command end-to-end. No-op for remote/cloud
+    # providers. Needs llama_model_path set (and a binary: llama_server_bin
+    # or a "llama-server" on PATH). See server_autostart.py.
+    "llama_autostart":         True,
+    "llama_server_bin":        "",   # default: shutil.which("llama-server")
+    "llama_model_path":        "",   # path to the .gguf to serve (required)
+    "llama_server_args":       [],   # extra args; default ["-ngl","99","-fa","on"]
+    "llama_autostart_timeout": 180,  # seconds to wait for /health
     "max_tool_output":  32000,
     "max_agent_depth":  3,
     "max_concurrent_agents": 3,

@@ -51,12 +51,17 @@ The two `llama.cpp` forks merge in [domvox/llama.cpp-turboquant-hip] on `feature
 ```bash
 git clone https://github.com/alexhergomz/Promethean.git
 cd promethean
-pip install -e .            # add [graph] for symbol-graph nav, [all] for everything
+pipx install .             # global `promethean` command, runnable from any directory
+                           # (or `pip install -e .` inside a venv for development)
+                           # add [graph] for symbol-graph nav, [all] for everything
 
 # Build the inference server once (see infra/llama-cpp/README.md)
 # branch: feature/turboquant-kv-cache  (or feature/triattention-scoring)
 
-promethean                  # interactive REPL (auto-starts llama-server)
+# One-time: point Promethean at the model to serve. It then starts
+# llama-server for you whenever the agent runs and the server is down.
+#   in the REPL:  /config llama_model_path=/path/to/model.gguf
+promethean                 # interactive REPL (auto-starts local llama-server if down)
 ```
 
 ```bash
