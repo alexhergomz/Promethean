@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from pathlib import Path
 
 from tool_registry import ToolDef, register_tool
+
+
+def _resolve(file_path: str) -> Path:
+    """Expand ~ and $ENV in a model-supplied path before use."""
+    return Path(os.path.expandvars(os.path.expanduser(file_path)))
 
 
 def _read_pdf(params: dict, config: dict) -> str:
@@ -29,7 +35,7 @@ def _read_pdf(params: dict, config: dict) -> str:
     pages = params.get("pages")  # e.g. "1-5" or "3" or None (all)
     offset = max(0, int(params.get("offset", 0) or 0))  # page offset, like text Read
     _WINDOW = 50                                         # pages per read when no range given
-    p = Path(file_path)
+    p = _resolve(file_path)
 
     if not p.exists():
         return f"Error: file not found: {file_path}"
@@ -90,7 +96,7 @@ def _read_image(params: dict, config: dict) -> str:
 
     file_path = params["file_path"]
     lang = params.get("language", "eng")
-    p = Path(file_path)
+    p = _resolve(file_path)
 
     if not p.exists():
         return f"Error: file not found: {file_path}"
@@ -116,7 +122,7 @@ def _read_excel(params: dict, config: dict) -> str:
     # size, and `offset` lets the model page through rows like a text file.
     max_rows = max(1, int(params.get("max_rows", 200) or 200))
     offset = max(0, int(params.get("offset", 0) or 0))
-    p = Path(file_path)
+    p = _resolve(file_path)
 
     if not p.exists():
         return f"Error: file not found: {file_path}"

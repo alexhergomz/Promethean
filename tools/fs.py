@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 import difflib
+import os
 from pathlib import Path
+
+
+def _resolve(file_path: str) -> Path:
+    """Normalize a model-supplied path: expand ~ and $ENV before use.
+
+    Models often emit literal '~/Desktop/...' paths; without expansion the
+    tilde is taken literally and a bogus '~' directory is created under cwd.
+    """
+    return Path(os.path.expandvars(os.path.expanduser(file_path)))
 
 
 def _read_preserving_newlines(p: Path) -> str:
@@ -42,7 +52,7 @@ def maybe_truncate_diff(diff_text: str, max_lines: int = 80) -> str:
 # ── Read ─────────────────────────────────────────────────────────────────
 
 def _read(file_path: str, limit: int = None, offset: int = None) -> str:
-    p = Path(file_path)
+    p = _resolve(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
     if p.is_dir():
@@ -61,7 +71,7 @@ def _read(file_path: str, limit: int = None, offset: int = None) -> str:
 # ── Write ─────────────────────────────────────────────────────────────────
 
 def _write(file_path: str, content: str) -> str:
-    p = Path(file_path)
+    p = _resolve(file_path)
     try:
         is_new      = not p.exists()
         old_content = "" if is_new else _read_preserving_newlines(p)
@@ -88,7 +98,7 @@ def _write(file_path: str, content: str) -> str:
 
 def _edit(file_path: str, old_string: str, new_string: str,
           replace_all: bool = False) -> str:
-    p = Path(file_path)
+    p = _resolve(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
     try:
