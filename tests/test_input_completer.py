@@ -18,6 +18,7 @@ from prompt_toolkit.document import Document
 
 META = {
     "help":       ("Show help", []),
+    "branch":     ("Branch the conversation here", []),
     "clear":      ("Clear conversation history", []),
     "checkpoint": ("List / restore checkpoints", ["clear"]),
     "compact":    ("Compact conversation history", []),
@@ -113,14 +114,15 @@ def test_live_command_registration_visible_without_restart():
     live_meta = dict(META)
     completer = SlashCompleter(lambda: live_commands, lambda: live_meta)
 
-    # Warm cache with a query.
-    assert [c.text for c in _completions(completer, "/f")] == []
+    # Warm cache with a query that fuzzily matches nothing yet ('f'..'k' is
+    # not a subsequence of any existing command name).
+    assert [c.text for c in _completions(completer, "/fk")] == []
 
     # Register a new command at runtime.
     live_commands["fakecmd"] = lambda *a, **k: True
     live_meta["fakecmd"] = ("Fake test command", [])
 
-    texts = [c.text for c in _completions(completer, "/f")]
+    texts = [c.text for c in _completions(completer, "/fk")]
     assert "/fakecmd" in texts
 
 
@@ -143,11 +145,45 @@ def test_setup_registers_module_level_providers():
     ui_input.setup(lambda: cmds, lambda: meta)
     try:
         completer = SlashCompleter()  # no ctor args — reads module-level
-        texts = [c.text for c in _completions(completer, "/a")]
+        texts = [c.text for c in _completions(completer, "/alph")]
         assert "/alpha" in texts
-        assert "/beta" not in texts
+        assert "/beta" not in texts  # 'alph' is not a subsequence of 'beta'
     finally:
         ui_input.setup(lambda: {}, lambda: {})
+
+
+def test_fuzzy_ranch_matches_branch():
+    """Subsequence fuzzy: a typo'd/partial query still surfaces the command."""
+    completer = _make_completer()
+    texts = [c.text for c in _completions(completer, "/ranch")]
+    assert "/branch" in texts  # 'ranch' is a subsequence of 'branch'
+
+
+def test_fuzzy_subsequence_requires_all_chars_in_order():
+    """A query char absent from a command keeps that command out."""
+    completer = _make_completer()
+    texts = [c.text for c in _completions(completer, "/cz")]
+    # No command contains the subsequence 'c'..'z'.
+    assert texts == []
+
+
+def test_fuzzy_prefix_ranks_above_scattered_subsequence():
+    """Prefix matches sort before scattered-subsequence matches."""
+    completer = _make_completer()
+    texts = [c.text for c in _completions(completer, "/co")]
+    # 'co' prefixes copy/cost/config/context; 'cloudsave' only matches as a
+    # scattered subsequence (c..o), so it must rank last among these.
+    assert "/cloudsave" in texts
+    for prefixed in ("/copy", "/cost", "/config", "/context"):
+        assert texts.index(prefixed) < texts.index("/cloudsave")
+
+
+def test_fuzzy_subcommand_matching():
+    """Level-2 subcommands match fuzzily too."""
+    completer = _make_completer()
+    texts = [c.text for c in _completions(completer, "/cloudsave st")]
+    assert "setup" in texts  # 'st' is a subsequence of 'setup'
+    assert "auto" not in texts  # 'auto' has no 's'
 
 
 def test_module_does_not_import_promethean():

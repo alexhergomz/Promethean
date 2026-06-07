@@ -34,6 +34,9 @@ class AgentState:
     total_cache_read_tokens:  int = 0
     total_cache_write_tokens: int = 0
     turn_count: int = 0
+    # Decode throughput of the most recent model turn (output tokens / sec),
+    # measured from first output token to end of stream. 0 until first turn.
+    last_tps: float = 0.0
 
 
 @dataclass
@@ -165,6 +168,7 @@ def run(
                 else:
                     _tool_schemas = _all_schemas
 
+                _t_first: float = 0.0  # set on first output token (decode start)
                 for event in stream(
                     model=config["model"],
                     system=system_prompt,
@@ -173,9 +177,16 @@ def run(
                     config=config,
                 ):
                     if isinstance(event, (TextChunk, ThinkingChunk)):
+                        if _t_first == 0.0:
+                            _t_first = time.perf_counter()
                         yield event
                     elif isinstance(event, AssistantTurn):
                         assistant_turn = event
+                        # Decode throughput for the status footer: output
+                        # tokens since the first token / elapsed decode time.
+                        _elapsed = time.perf_counter() - _t_first
+                        if _t_first and _elapsed > 0 and event.out_tokens:
+                            state.last_tps = event.out_tokens / _elapsed
                         # Record usage for quota tracking
                         _quota.record_usage(
                             session_id, config["model"],
