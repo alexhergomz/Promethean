@@ -16,6 +16,7 @@ dependencies = [
     "rich>=13.0.0",
     "pyte>=0.8.0",
     "PyYAML>=6.0",          # agent-template + plugin YAML frontmatter
+    "prompt_toolkit>=3.0.43",  # `/`-command dropdown + fuzzy slash completion
 ]
 
 # NOTE: `voice`/`video` pull torch (via openai-whisper) — pip installs the

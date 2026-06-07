@@ -644,25 +644,39 @@ def repl(config: dict, initial_prompt: str = None):
         no syscalls or network. Failures degrade gracefully to empty.
         """
         try:
-            from cc_config import calc_cost
+            from cc_config import calc_cost, has_api_key
             from compaction import get_context_limit, estimate_tokens
+            from providers import detect_provider
             model = config.get("model", "?")
             limit = max(1, get_context_limit(model, config))
             used  = estimate_tokens(state.messages, model) if state.messages else 0
             pct   = min(99, int(100 * used / limit))
-            cost  = calc_cost(model, state.total_input_tokens, state.total_output_tokens)
-            approx = "~" if getattr(state, "_usage_estimated", False) else ""
             ladder = config.get("failover_models") or []
             fo = f" · failover: {'→'.join(ladder)}" if ladder else ""
             # Brand palette: model in flame, ctx% warmth→ember→red as it fills,
             # everything else muted (dust). Violet for the failover ladder.
             ctx_clr = "warmth" if pct < 60 else ("ember" if pct < 85 else "red")
-            return (
+            line = (
                 clr(f" {model}", "flame")
                 + clr(" · ctx ", "dust") + clr(f"{pct}%", ctx_clr)
-                + clr(f" · {approx}${cost:.4f} session", "dust")
-                + clr(fo, "violet")
             )
+            # Decode throughput of the last turn (when known).
+            tps = getattr(state, "last_tps", 0.0)
+            if tps and tps > 0:
+                line += clr(" · ", "dust") + clr(f"{tps:.0f} t/s", "warmth")
+            # Cost only for a cloud provider with an API key. Hidden for local
+            # backends (llama-server / Ollama / LM Studio) where it is always
+            # zero — note Ollama reports a placeholder key, so the provider
+            # check is needed in addition to has_api_key.
+            _cloud = (has_api_key(config)
+                      and detect_provider(model)
+                      not in ("custom", "ollama", "lmstudio"))
+            if _cloud:
+                cost = calc_cost(model, state.total_input_tokens,
+                                 state.total_output_tokens)
+                approx = "~" if getattr(state, "_usage_estimated", False) else ""
+                line += clr(f" · {approx}${cost:.4f} session", "dust")
+            return line + clr(fo, "violet")
         except Exception:
             return ""
 
@@ -910,32 +924,39 @@ def repl(config: dict, initial_prompt: str = None):
                         # Compact per-turn usage line, always on. Daily-
                         # driver use: lets the user watch budget burn turn
                         # by turn without flipping verbose mode.
-                        from cc_config import calc_cost as _ccalc
-                        _turn_cost = _ccalc(
-                            config["model"],
-                            event.input_tokens, event.output_tokens,
-                        )
-                        _sess_cost = _ccalc(
-                            config["model"],
-                            state.total_input_tokens,
-                            state.total_output_tokens,
-                        )
+                        from cc_config import calc_cost as _ccalc, has_api_key
+                        from providers import detect_provider as _dp
+                        # Show cost only for a cloud provider with an API key;
+                        # for local backends it is always zero (Ollama reports a
+                        # placeholder key, so check the provider too).
+                        _show_cost = (has_api_key(config)
+                                      and _dp(config["model"])
+                                      not in ("custom", "ollama", "lmstudio"))
                         if verbose:
-                            print(clr(
-                                f"\n  [+{event.input_tokens} in / "
-                                f"+{event.output_tokens} out · "
-                                f"${_turn_cost:.4f} · session "
-                                f"{state.total_input_tokens:,}/"
-                                f"{state.total_output_tokens:,} · "
-                                f"${_sess_cost:.4f}]", "dim",
-                            ))
+                            _line = (f"\n  [+{event.input_tokens} in / "
+                                     f"+{event.output_tokens} out")
+                            if _show_cost:
+                                _tc = _ccalc(config["model"],
+                                             event.input_tokens, event.output_tokens)
+                                _line += f" · ${_tc:.4f}"
+                            _line += (f" · session {state.total_input_tokens:,}/"
+                                      f"{state.total_output_tokens:,}")
+                            if _show_cost:
+                                _sc = _ccalc(config["model"],
+                                             state.total_input_tokens,
+                                             state.total_output_tokens)
+                                _line += f" · ${_sc:.4f}"
+                            print(clr(_line + "]", "dim"))
                         else:
-                            print(clr(
-                                f"  [+{event.input_tokens}/"
-                                f"+{event.output_tokens} · "
-                                f"${_turn_cost:.4f} · ${_sess_cost:.4f}]",
-                                "dim",
-                            ))
+                            _line = f"  [+{event.input_tokens}/+{event.output_tokens}"
+                            if _show_cost:
+                                _tc = _ccalc(config["model"],
+                                             event.input_tokens, event.output_tokens)
+                                _sc = _ccalc(config["model"],
+                                             state.total_input_tokens,
+                                             state.total_output_tokens)
+                                _line += f" · ${_tc:.4f} · ${_sc:.4f}"
+                            print(clr(_line + "]", "dim"))
             except KeyboardInterrupt:
                 _stop_tool_spinner()
                 flush_response()
