@@ -67,6 +67,7 @@ py-modules = [
     "quota",
     "runtime",
     "search_tokenize",
+    "server_autostart",
     "session_store",
     "skills",
     "subagent",
