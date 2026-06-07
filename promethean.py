@@ -514,6 +514,12 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
                                                            "todo", "in-progress", "done", "blocked"]),
     "proactive":   ("Manage proactive background watcher", ["off"]),
     "cloudsave":   ("Cloud-sync sessions to GitHub Gist", ["setup", "auto", "list", "load", "push"]),
+    "monitor":     ("Manage topic monitors (run / schedule)",
+                    ["setup", "run", "start", "stop", "status", "set", "topics"]),
+    "subscribe":   ("Subscribe to a monitoring topic",   []),
+    "subscriptions": ("List active monitor subscriptions", []),
+    "subs":        ("List subscriptions (alias)",        []),
+    "unsubscribe": ("Remove a monitor subscription",     []),
     **({"voice": ("Voice input (record → STT)", ["lang", "status", "device"])} if _VOICE_MODULAR else {}),
     **({"tts": ("AI voice generator: text → any style → audio file", ["status"])} if _VOICE_MODULAR else {}),
     "image":       ("Send clipboard image to model",      []),
@@ -524,6 +530,7 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
     "ssj":         ("SSJ Developer Mode — power menu",    []),
     "telegram":    ("Telegram bot bridge",                ["stop", "status"]),
     "wechat":      ("WeChat bridge (iLink Bot API)",      ["stop", "status"]),
+    "weixin":      ("WeChat bridge (alias)",              ["stop", "status"]),
     "slack":       ("Slack bot bridge (Web API)",         ["stop", "status", "logout"]),
     **({"video": ("AI video factory: story→voice→images→mp4", ["status", "niches"])} if _VIDEO_AVAILABLE else {}),
     "checkpoint":  ("List / restore checkpoints",          ["clear"]),
@@ -534,8 +541,12 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
                     ["list", "status", "msg", "stop", "report"]),
     "rabbithole":  ("Rabbit-hole (alias)",                  ["list", "status", "msg", "stop", "report"]),
     "rh":          ("Rabbit-hole (short alias)",            ["list", "status", "msg", "stop", "report"]),
+    "research":    ("Deep-research a topic across sources", ["compare", "list-sources"]),
+    "reports":     ("List / show saved research reports",   ["list"]),
     "slots":       ("Configure llama-server slots and serial mode",
                     ["np", "serial", "restart", "status"]),
+    "graph-view":  ("Toggle graph-tool CLI visualization",  ["on", "off", "toggle"]),
+    "graphview":   ("Toggle graph visualization (alias)",   ["on", "off", "toggle"]),
     "init":        ("Initialize CLAUDE.md template",        []),
     "export":      ("Export conversation to file",          []),
     "copy":        ("Copy last response to clipboard",      []),
@@ -548,6 +559,42 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
     "quit":        ("Exit (alias for /exit)",             []),
     "resume":      ("Resume last session",                []),
 }
+
+
+def _merge_external_meta_into(meta: dict, commands: dict) -> None:
+    """Populate _CMD_META with descriptions declared by modular/ + plugin
+    commands, so their slash-commands show help in the completer without
+    hand-duplicating each one here. Only describes commands that actually
+    loaded (in `commands`) to avoid phantom menu entries, and never
+    overwrites an existing hand-written description.
+
+    Convention: a command def carries ``"help": (description, [subcommands])``.
+    """
+    def _ingest(defs: dict) -> None:
+        for name, d in defs.items():
+            if name not in commands or name in meta:
+                continue
+            help_t = d.get("help") if isinstance(d, dict) else None
+            if not (isinstance(help_t, (tuple, list)) and help_t):
+                continue
+            desc = str(help_t[0])
+            subs = list(help_t[1]) if len(help_t) > 1 and isinstance(help_t[1], list) else []
+            meta[name] = (desc, subs)
+            for alias in (d.get("aliases", []) if isinstance(d, dict) else []):
+                if alias in commands and alias not in meta:
+                    meta[alias] = (f"{desc} (alias)", subs)
+    try:
+        _ingest(_modular_load_commands())
+    except Exception:
+        pass
+    try:
+        from plugin.loader import load_plugin_commands
+        _ingest(load_plugin_commands())
+    except Exception:
+        pass
+
+
+_merge_external_meta_into(_CMD_META, COMMANDS)
 
 
 _rl_current_prompt = ""   # set by _read_input before each input() call
