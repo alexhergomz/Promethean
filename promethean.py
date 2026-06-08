@@ -290,7 +290,7 @@ def _missing_module_cmd(name: str):
 # ── Permission prompt ──────────────────────────────────────────────────────
 
 def ask_permission_interactive(desc: str, config: dict) -> bool:
-    text = ask_input_interactive(f"  Allow: {desc}  [y/N/a(ccept-all)] ", config).strip().lower()
+    text = ask_input_interactive(f"  Allow: {desc}  [y / N / a=accept-all] ", config).strip().lower()
 
     if text == "a" or text == "accept all" or text == "accept-all":
         config["permission_mode"] = "accept-all"
