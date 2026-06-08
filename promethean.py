@@ -707,6 +707,13 @@ def repl(config: dict, initial_prompt: str = None):
                 clr(f" {model}", "flame")
                 + clr(" · ctx ", "dust") + clr(f"{pct}%", ctx_clr)
             )
+            # Permission mode (toggled with Shift+Tab). Colour signals risk:
+            # plan=violet (read-only), accept-all=ember (auto-approves all),
+            # manual=dust, auto=warmth.
+            _mode = config.get("permission_mode", "auto")
+            _mode_clr = {"plan": "violet", "accept-all": "ember",
+                         "manual": "dust"}.get(_mode, "warmth")
+            line += clr(" · ", "dust") + clr(_mode, _mode_clr)
             # Decode throughput of the last turn (when known).
             tps = getattr(state, "last_tps", 0.0)
             if tps and tps > 0:
@@ -727,14 +734,45 @@ def repl(config: dict, initial_prompt: str = None):
         except Exception:
             return ""
 
+    # Shift+Tab cycles the permission mode: auto → accept-all → plan → auto.
+    # Plan entry is a "light" toggle (no description required): it saves the
+    # previous mode and lazily creates the plan file, then the next user
+    # message becomes the planning request (the plan-mode system fragment is
+    # injected whenever permission_mode == "plan"). /plan <desc> still works.
+    _PERM_CYCLE = ("auto", "accept-all", "plan")
+
+    def _cycle_permission_mode():
+        import runtime as _rt
+        from pathlib import Path as _Path
+        sctx = _rt.get_ctx(config)
+        cur = config.get("permission_mode", "auto")
+        nxt = (_PERM_CYCLE[(_PERM_CYCLE.index(cur) + 1) % len(_PERM_CYCLE)]
+               if cur in _PERM_CYCLE else "auto")
+        if nxt == "plan" and cur != "plan":
+            sctx.prev_permission_mode = cur
+            if not (sctx.plan_file and _Path(sctx.plan_file).exists()):
+                try:
+                    pd = _Path.cwd() / ".nano_claude" / "plans"
+                    pd.mkdir(parents=True, exist_ok=True)
+                    pp = pd / f"{config.get('_session_id', 'default')}.md"
+                    if not pp.exists():
+                        pp.write_text("# Plan\n\n", encoding="utf-8")
+                    sctx.plan_file = str(pp)
+                except Exception:
+                    pass
+        config["permission_mode"] = nxt
+        return nxt
+
     if HAS_PROMPT_TOOLKIT:
         # Inject live providers so ui.input's completer enumerates the same
         # command set the dispatcher accepts (includes plugin/modular adds).
         # `status_provider` renders the always-visible footer line at the
         # bottom of the input box (model · ctx% · $session · failover state).
+        # `mode_cycler` is bound to Shift+Tab.
         _ui_input.setup(
             lambda: COMMANDS, lambda: _CMD_META,
             status_provider=lambda: _status_footer(state, config),
+            mode_cycler=_cycle_permission_mode,
         )
     else:
         setup_readline(HISTORY_FILE)
@@ -803,7 +841,8 @@ def repl(config: dict, initial_prompt: str = None):
         print(clr("  ╭─ ", "dust") + clr("PROMETHEAN ", "flame", "bold") + ver_clr + clr(" ──────────────────────────────╮", "dust"))
         print(clr("  │", "dust") + clr("  Locally sourced.", "violet"))
         print(clr("  │", "dust") + clr("  Model: ", "dim") + model_clr + " " + prov_clr)
-        print(clr("  │", "dust") + clr("  Permissions: ", "dim") + pmode)
+        print(clr("  │", "dust") + clr("  Permissions: ", "dim") + pmode
+              + clr("  (Shift+Tab to cycle)", "dim"))
         print(clr("  │", "dust") + clr("  /model to switch · /help for commands", "dim"))
         print(clr("  ╰──────────────────────────────────────────────────────╯", "dust"))
 

@@ -20,6 +20,7 @@ try:
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import ANSI
     from prompt_toolkit.history import FileHistory, InMemoryHistory
+    from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.patch_stdout import patch_stdout
     from prompt_toolkit.styles import Style
     HAS_PROMPT_TOOLKIT = True
@@ -35,12 +36,17 @@ _meta_provider: Optional[Callable[[], dict]] = None
 # at the bottom of the input box. Set by promethean.repl. Wrapped in a
 # function so the toolbar refreshes on every redraw.
 _status_provider: Optional[Callable[[], str]] = None
+# Optional callback bound to Shift+Tab: advances the permission mode and
+# returns the new mode label (or None). Set by promethean.repl so the
+# input layer stays free of any config/permission knowledge.
+_mode_cycler: Optional[Callable[[], Optional[str]]] = None
 
 
 def setup(
     commands_provider: Callable[[], dict],
     meta_provider: Callable[[], dict],
     status_provider: Optional[Callable[[], str]] = None,
+    mode_cycler: Optional[Callable[[], Optional[str]]] = None,
 ) -> None:
     """Register providers for the live command registry and metadata.
 
@@ -48,11 +54,14 @@ def setup(
     `meta_provider` returns the _CMD_META dict (descriptions + subcommands).
     `status_provider` (optional) returns the bottom-toolbar text for the
     input box — typically a 1-line summary of model/ctx/cost/failover.
+    `mode_cycler` (optional) advances the permission mode (Shift+Tab) and
+    returns the new label.
     """
-    global _commands_provider, _meta_provider, _status_provider
+    global _commands_provider, _meta_provider, _status_provider, _mode_cycler
     _commands_provider = commands_provider
     _meta_provider = meta_provider
     _status_provider = status_provider
+    _mode_cycler = mode_cycler
 
 
 # ── Fuzzy matching ───────────────────────────────────────────────────────────
@@ -230,6 +239,21 @@ def _build_session(history_path: Optional[Path]):
         if not txt:
             return None
         return ANSI(txt)
+
+    # Shift+Tab cycles the permission mode (Tab itself is completion). The
+    # handler just delegates to the registered cycler and repaints so the
+    # bottom-toolbar indicator updates immediately.
+    kb = KeyBindings()
+
+    @kb.add("s-tab")
+    def _cycle_mode(event):  # noqa: ANN001
+        if _mode_cycler is not None:
+            try:
+                _mode_cycler()
+            except Exception:
+                pass
+            event.app.invalidate()
+
     return PromptSession(
         history=history,
         completer=completer,
@@ -239,6 +263,7 @@ def _build_session(history_path: Optional[Path]):
         mouse_support=False,
         style=style,
         bottom_toolbar=_toolbar,
+        key_bindings=kb,
         refresh_interval=0.5,
     )
 

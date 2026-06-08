@@ -52,12 +52,13 @@ sys.stdout.flush()
 """
 
 
-def _run_child(keystrokes: list[tuple[float, bytes]], timeout: float = 4.0) -> bytes:
+def _run_child(keystrokes: list[tuple[float, bytes]], timeout: float = 4.0,
+               script_tmpl: str = _CHILD_SCRIPT) -> bytes:
     """Spawn the child under a PTY and play a sequence of (delay, bytes) writes.
 
     Reads until 'RESULT=' lands on stdout or the timeout expires.
     """
-    script = _CHILD_SCRIPT.format(repo_root=_REPO_ROOT)
+    script = script_tmpl.format(repo_root=_REPO_ROOT)
     pid, fd = pty.fork()
     if pid == 0:
         os.execv(sys.executable, [sys.executable, "-c", script])
@@ -121,6 +122,48 @@ def test_typing_slash_c_renders_menu_with_matches():
             b"/config", b"/copy", b"/cost", b"/context", b"/cloudsave",
         )
     ), output[-500:]
+
+
+_CYCLE_SCRIPT = r"""
+import sys, os
+sys.path.insert(0, {repo_root!r})
+import ui.input as _ui
+
+_marker = os.environ.get("PROM_MODE_MARKER", "")
+_state = {{"mode": "auto"}}
+_CYCLE = ["auto", "accept-all", "plan"]
+def _cycle():
+    _state["mode"] = _CYCLE[(_CYCLE.index(_state["mode"]) + 1) % len(_CYCLE)]
+    if _marker:
+        with open(_marker, "a") as f:
+            f.write(_state["mode"] + chr(10))
+    return _state["mode"]
+
+_ui.setup(lambda: {{}}, lambda: {{}}, mode_cycler=_cycle)
+result = _ui.read_line("[test] > ")
+sys.stdout.write("RESULT=" + repr(result) + chr(10))
+sys.stdout.flush()
+"""
+
+
+def test_shift_tab_cycles_permission_mode(tmp_path):
+    """Shift+Tab invokes the registered mode_cycler and cycles in order.
+
+    Sends two Shift+Tab (BackTab = ESC [ Z) then Enter. The cycler records
+    each new mode to a marker file (the bottom toolbar itself does not render
+    reliably under a headless PTY), so we assert auto -> accept-all -> plan.
+    """
+    marker = tmp_path / "modes.txt"
+    os.environ["PROM_MODE_MARKER"] = str(marker)
+    try:
+        _run_child(
+            [(0.3, b"\x1b[Z"), (0.8, b"\x1b[Z"), (1.2, b"\r")],
+            script_tmpl=_CYCLE_SCRIPT,
+        )
+    finally:
+        os.environ.pop("PROM_MODE_MARKER", None)
+    modes = marker.read_text().split() if marker.exists() else []
+    assert modes[:2] == ["accept-all", "plan"], modes
 
 
 def test_arrow_down_then_enter_picks_first_menu_entry():
