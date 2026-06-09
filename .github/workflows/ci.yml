@@ -7,6 +7,23 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    # Advisory baseline. The pre-existing tree carries import-order/unused-import
+    # findings that cannot be cleared without source edits (out of scope here),
+    # so ruff runs for visibility (inline annotations) rather than as a blocking
+    # gate. New/changed code is kept clean by the ruff pre-commit hook; promote
+    # this to a blocking gate after a dedicated cleanup pass.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Ruff lint (advisory)
+        continue-on-error: true
+        run: uvx ruff check --output-format=github .
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -19,6 +36,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
@@ -41,6 +60,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
 
       - name: Install package
         run: |
