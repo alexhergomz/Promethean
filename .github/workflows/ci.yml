@@ -17,12 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v8
-
       - name: Ruff lint (advisory)
         continue-on-error: true
-        run: uvx ruff check --output-format=github .
+        run: pipx run ruff check --output-format=github .
 
   test:
     runs-on: ubuntu-latest
@@ -68,7 +65,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Smoke test — all modules importable
+      - name: Smoke test, all modules importable
         run: |
           python -c "
           import sys, importlib
@@ -108,5 +105,5 @@ jobs:
               print(f'All {len(modules) + len(packages)} modules imported OK')
           "
 
-      - name: Smoke test — CLI entry point exists
+      - name: Smoke test, CLI entry point exists
         run: python -c "from promethean import main; print('Entry point OK')"
