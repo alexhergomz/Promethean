@@ -13,7 +13,7 @@ Full-stack coding agent for hardware you already own.
 [![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-8B7FD4)](pyproject.toml)
 [![CI](https://github.com/alexhergomz/Promethean/actions/workflows/ci.yml/badge.svg)](https://github.com/alexhergomz/Promethean/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-FF5F1F)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-960%2B%20passing-FF8C42)](tests/)
+[![Tests](https://img.shields.io/badge/tests-916%20passing-FF8C42)](tests/)
 [![Model](https://img.shields.io/badge/model-Qwen3.5--9B-FFB068)](https://huggingface.co/Qwen)
 [![VRAM](https://img.shields.io/badge/VRAM-8GB-FFCF9D)](#target-hardware)
 
@@ -84,7 +84,7 @@ First run with no local server? Promethean speaks plain **OpenAI-compatible HTTP
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  HARNESS  (Python; ~45 KLoC; 960+ unit tests)                │
+│  HARNESS  (Python; ~45 KLoC; 916 unit tests)                 │
 │  REPL · slash commands · permission flow · tool dispatch     │
 │  symbol-graph nav · rabbit-hole research · live UX           │
 │  truncation recovery · bash deny-list · sensitive-path jail  │
@@ -113,7 +113,7 @@ First run with no local server? Promethean speaks plain **OpenAI-compatible HTTP
 |---|---|---|
 | **TurboQuant** | Q4_0/Q4_0 KV + FlashAttention stable on `feature/turboquant-kv-cache` | merging the two `llama.cpp` branches into one |
 | **TriAttention** | eviction wired end-to-end; auto-calibration on NVIDIA + AMD; **28.4 t/s** vs 23.8 t/s dense at 4 K | runtime flag in the unified build |
-| **Harness** | 960+ tests · slot save/restore · sandboxed research · symbol-graph nav · `/resume` · MCP · `/slots` | provider cassettes · Rust/Go symbol-graph fixtures |
+| **Harness** | 916 tests · slot save/restore · sandboxed research · symbol-graph nav · `/resume` · MCP · `/slots` | provider cassettes · Rust/Go symbol-graph fixtures |
 
 > **Research project, not production software.** Run it on your own machine, at your own risk.
 
