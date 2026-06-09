@@ -11,6 +11,7 @@ Full-stack coding agent for hardware you already own.
 `224k context` · `deep research` · `autonomous agents` · `8 GB of VRAM`
 
 [![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-8B7FD4)](pyproject.toml)
+[![CI](https://github.com/alexhergomz/Promethean/actions/workflows/ci.yml/badge.svg)](https://github.com/alexhergomz/Promethean/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-FF5F1F)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-960%2B%20passing-FF8C42)](tests/)
 [![Model](https://img.shields.io/badge/model-Qwen3.5--9B-FFB068)](https://huggingface.co/Qwen)
@@ -19,6 +20,10 @@ Full-stack coding agent for hardware you already own.
 *by Minerva Labs*
 
 </div>
+
+<p align="center"><img src="docs/demo.gif" alt="Promethean in action" width="800" /></p>
+
+<p align="center"><sub>More demos in <a href="docs/"><code>docs/</code></a></sub></p>
 
 ---
 
@@ -55,7 +60,7 @@ pipx install .             # global `promethean` command, runnable from any dire
                            # (or `pip install -e .` inside a venv for development)
                            # add [graph] for symbol-graph nav, [all] for everything
 
-# Build the inference server once (see infra/llama-cpp/README.md)
+# Build the inference server once — see the companion llama.cpp fork (domvox/llama.cpp-turboquant-hip)
 # branch: feature/turboquant-kv-cache  (or feature/triattention-scoring)
 
 # One-time: point Promethean at the model to serve. It then starts
