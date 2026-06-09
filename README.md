@@ -10,12 +10,12 @@ Full-stack coding agent for hardware you already own.
 
 `224k context` · `deep research` · `autonomous agents` · `8 GB of VRAM`
 
-[![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-8B7FD4)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.10--3.13-8B7FD4)](pyproject.toml)
 [![CI](https://github.com/alexhergomz/Promethean/actions/workflows/ci.yml/badge.svg)](https://github.com/alexhergomz/Promethean/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-FF5F1F)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-916%20passing-FF8C42)](tests/)
-[![Model](https://img.shields.io/badge/model-Qwen3.5--9B-FFB068)](https://huggingface.co/Qwen)
-[![VRAM](https://img.shields.io/badge/VRAM-8GB-FFCF9D)](#target-hardware)
+[![Model](https://img.shields.io/badge/local%20model-Qwen3.5--9B-FFB068)](https://huggingface.co/Qwen)
+[![VRAM](https://img.shields.io/badge/local%20VRAM-8GB-FFCF9D)](#target-hardware)
 
 *by Minerva Labs*
 
@@ -29,17 +29,17 @@ Full-stack coding agent for hardware you already own.
 
 ## What is this
 
-A self-contained coding & research agent that runs **entirely on your machine**, on a single 8 GB consumer GPU. No API keys. No metering. No request leaves the box.
+A self-contained coding & research agent. In its flagship mode it runs **entirely on your machine**, on a single 8 GB consumer GPU: no API keys, no metering, no request leaves the box. The 8 GB figure is what the local inference stack is tuned for, not an entry requirement. The harness speaks plain OpenAI-compatible HTTP, so the same agent also drives Ollama, LM Studio, or any cloud provider on whatever hardware you have (see [Bring your own model](#bring-your-own-model)).
 
 It's a fork of [cheetahclaws] (a Python-native, Claude-Code-style harness) wired onto two upstream `llama.cpp` research forks for the inference layer. Three layers, one binary:
 
 | Layer | Source | What it does |
 |---|---|---|
-| **TurboQuant** *(TQ)* | [TheTom/llama-cpp-turboquant] | Q4_0/Q4_0 KV-cache quantization with FlashAttention. Cuts KV VRAM 4× — fits **224 K context** on 8 GB. |
+| **TurboQuant** *(TQ)* | [TheTom/llama-cpp-turboquant] | Q4_0/Q4_0 KV-cache quantization with FlashAttention. Cuts KV VRAM 4×; fits **224 K context** on 8 GB. |
 | **TriAttention** *(Tria)* | [Mao et al., 2026][tria-paper] · C/HIP impl by [domvox/triattention-ggml] | Eviction-based KV pruning (budget / window / sink / interval). Bounds *active* KV regardless of conversation length. |
 | **Harness** | this repo, forked from [cheetahclaws] | Tool dispatch, sandboxed research agents, symbol-graph navigation, slot save/restore, truncation recovery, live UX. **Without it, it's just a chat endpoint.** |
 
-The two `llama.cpp` forks merge in [domvox/llama.cpp-turboquant-hip] on `feature/triattention-scoring` — the actual binary you run.
+The two `llama.cpp` forks merge in [domvox/llama.cpp-turboquant-hip] on `feature/triattention-scoring`, the actual binary you run.
 
 > Every capability the cloud sells by the token, Promethean runs locally for free.
 
@@ -59,8 +59,20 @@ cd promethean
 pipx install .             # global `promethean` command, runnable from any directory
                            # (or `pip install -e .` inside a venv for development)
                            # add [graph] for symbol-graph nav, [all] for everything
+```
 
-# Build the inference server once — see the companion llama.cpp fork (domvox/llama.cpp-turboquant-hip)
+**Fastest start: a model you already have.** No GPU and no inference build required; point Promethean at any OpenAI-compatible backend, local or cloud:
+
+```bash
+promethean -m ollama/qwen2.5-coder   # existing local server (Ollama, LM Studio, ...)
+promethean -m gpt-4o                 # cloud (needs OPENAI_API_KEY)
+promethean -m gemini-2.0-flash       # cloud (needs GEMINI_API_KEY)
+```
+
+**Full local stack** (the headline mode: 224 K context on an 8 GB GPU):
+
+```bash
+# Build the inference server once. See the companion llama.cpp fork (domvox/llama.cpp-turboquant-hip),
 # branch: feature/turboquant-kv-cache  (or feature/triattention-scoring)
 
 # One-time: point Promethean at the model to serve. It then starts
@@ -69,6 +81,8 @@ pipx install .             # global `promethean` command, runnable from any dire
 promethean                 # interactive REPL (auto-starts local llama-server if down)
 ```
 
+Everyday flags, same in either mode:
+
 ```bash
 promethean -p "refactor the auth module"   # one-shot, non-interactive
 promethean --tria                          # long-context speedup via TriAttention
@@ -76,7 +90,17 @@ promethean --accept-all                    # autonomous: never ask permission
 promethean --web                           # browser terminal
 ```
 
-First run with no local server? Promethean speaks plain **OpenAI-compatible HTTP**, so point it at Anthropic / OpenAI / Gemini and the same agent drives a cloud model instead. Run it yourself when you want to; rent when you don't.
+### Bring your own model
+
+The inference layer is a plain OpenAI-compatible HTTP endpoint, so the TurboQuant stack is one option among many:
+
+| Backend | Providers |
+|---|---|
+| **Local, no build** | Ollama, LM Studio, any OpenAI-compatible server you already run |
+| **Cloud** | Anthropic, OpenAI, Gemini, DeepSeek, Kimi (Moonshot), Qwen (DashScope), Zhipu, MiniMax |
+| **Custom** | Any OpenAI-compatible URL via the `custom` provider |
+
+Switch any time with `/model <name>` in the REPL or `-m` on the CLI. The provider is auto-detected from the model name (`gpt-4o`, `gemini-2.0-flash`) or set with an explicit prefix (`ollama/qwen2.5-coder`, `kimi:moonshot-v1-32k`). Named profiles (`/model qwen`) bundle model, provider, and base URL into one alias. Run it yourself when you want to; rent when you don't.
 
 ---
 
@@ -121,9 +145,11 @@ First run with no local server? Promethean speaks plain **OpenAI-compatible HTTP
 
 ## Target hardware
 
+This table is what the fully local stack (TurboQuant + Qwen3.5-9B) is tuned for. None of it is required otherwise: with a cloud key or an existing Ollama / LM Studio server, any machine that runs Python is enough.
+
 | Component | Spec |
 |---|---|
-| **GPU** | 8 GB VRAM (developed on an RX 6650 XT — RDNA 2 / `gfx1032`, ROCm 6.2) |
+| **GPU** | 8 GB VRAM (developed on an RX 6650 XT, RDNA 2 / `gfx1032`, ROCm 6.2) |
 | **CPU** | Any x86-64 (CPU-only path works, just slower) |
 | **RAM** | 16 GB recommended |
 | **Disk** | ~10 GB for model + workspaces |
@@ -136,14 +162,14 @@ Built on a Ryzen 5, a 6650 XT, and the conviction that intelligence shouldn't re
 
 Running an autonomous coding agent locally is two problems stacked:
 
-1. **Memory.** A 9 B model's KV cache grows as `2 × n_layer × n_head × d_head × ctx × 2` bytes — about 1 GB per 16 K context on Qwen3.5-9B. Standard Q4_0 weights fit in ~5 GB, but the KV cache pushes you off an 8 GB card at long contexts. Offload is too slow for an agent loop.
+1. **Memory.** A 9 B model's KV cache grows as `2 × n_layer × n_head × d_head × ctx × 2` bytes, about 1 GB per 16 K context on Qwen3.5-9B. Standard Q4_0 weights fit in ~5 GB, but the KV cache pushes you off an 8 GB card at long contexts. Offload is too slow for an agent loop.
 2. **Agent quality.** A chat endpoint isn't an agent. You need tool dispatch, permission flow, truncation recovery, persistent sessions, and enough live UX to know what the model is doing. None of that ships in `llama-server`.
 
 Promethean's three layers answer each:
 
 - **TurboQuant** cuts KV from ~1 GB / 16 K → ~250 MB / 16 K, wired straight into the FlashAttention kernel. Fits **224 K context** on 8 GB.
 - **TriAttention** bounds *active* KV at a configurable budget, so going past Qwen3.5's 32 K training context doesn't degrade attention linearly.
-- **The harness** is the [cheetahclaws] fork with the fixes that make local autonomous use viable — most load-bearing being the truncation alternation invariant fix (the bug behind the "harness repeats text" / "Qwen tool-call spam" failure modes).
+- **The harness** is the [cheetahclaws] fork with the fixes that make local autonomous use viable, the most load-bearing being the truncation alternation invariant fix (the bug behind the "harness repeats text" / "Qwen tool-call spam" failure modes).
 
 ---
 
@@ -153,14 +179,14 @@ Promethean's three layers answer each:
 Eight tools backed by tree-sitter + a sqlite tag cache (vendored from [Aider's repo map](https://aider.chat/docs/repomap.html)):
 
 - `RepoMap` · `FindSymbol` · `GetCallers` · `Outline`
-- `Neighborhood` — callers + callees of a symbol
-- `PathBetween` — bidirectional BFS, shortest call chain
-- `Imports` — transitive `depth=N` import graph
-- `SearchFiles` — **BM25** with identifier-aware tokenization (camelCase / snake_case / acronym splits) and a path bonus
+- `Neighborhood`: callers + callees of a symbol
+- `PathBetween`: bidirectional BFS, shortest call chain
+- `Imports`: transitive `depth=N` import graph
+- `SearchFiles`: **BM25** with identifier-aware tokenization (camelCase / snake_case / acronym splits) and a path bonus
 
 All cache by `(root, mtime-fingerprint)` → ~160× speedup on repeats. `/graph-view on` renders the active call chain as a Rich-drawn boxed graph, traversed path lit in flame. *(Install the `[graph]` extra to enable.)*
 
-### Rabbit-hole mode — research that doesn't bill by the hour
+### Rabbit-hole mode: research that doesn't bill by the hour
 
 ```
 /rabbit-hole investigate every variant of speculative decoding
@@ -169,9 +195,9 @@ All cache by `(root, mtime-fingerprint)` → ~160× speedup on repeats. `/graph-
 
 Spawns a **sandboxed agent** that runs in the background until killed:
 - Tool whitelist excludes Bash/Write/Edit; `Read` is path-jailed to its workspace
-- Disk-backed workspace at `~/.promethean/rabbit-hole/<id>/` — fetched sources (deduped by URL hash), structured findings, sub-question tree
-- Live activity feed via `/rabbit-hole status` — chronological event log
-- **Resumable** — `/rabbit-hole resume <id>` continues where it left off
+- Disk-backed workspace at `~/.promethean/rabbit-hole/<id>/`: fetched sources (deduped by URL hash), structured findings, sub-question tree
+- Live activity feed via `/rabbit-hole status`, a chronological event log
+- **Resumable**: `/rabbit-hole resume <id>` continues where it left off
 - BM25-driven final synthesis on cancel/finish
 
 ```
@@ -182,7 +208,7 @@ Spawns a **sandboxed agent** that runs in the background until killed:
 Aliases: `/rh`, `/rabbithole`.
 
 ### Sub-agents
-Spawn as many as the problem needs. They're on your hardware — own context, sandboxed tool whitelist, no per-agent invoice.
+Spawn as many as the problem needs. They're on your hardware: own context, sandboxed tool whitelist, no per-agent invoice.
 
 ### Slot configuration (`/slots`)
 Three modes for the inference layer, switchable from the REPL:
@@ -195,20 +221,20 @@ Three modes for the inference layer, switchable from the REPL:
 
 ### Security guards
 Multi-layer defenses:
-- `_is_dangerous_bash` — regex deny-list for `rm -rf /`, `dd of=/dev/sda`, fork bomb, `curl | sh`, `chmod 777 /`, etc. Fires *even in `accept-all` mode*.
-- `_is_sensitive_path` — `~/.ssh`, `~/.aws`, `~/.gnupg`, `/etc/shadow` blocked unconditionally for Read/Write/Edit.
+- `_is_dangerous_bash`: regex deny-list for `rm -rf /`, `dd of=/dev/sda`, fork bomb, `curl | sh`, `chmod 777 /`, etc. Fires *even in `accept-all` mode*.
+- `_is_sensitive_path`: `~/.ssh`, `~/.aws`, `~/.gnupg`, `/etc/shadow` blocked unconditionally for Read/Write/Edit.
 - Tool-whitelist enforcement for subagents: schema filter + dispatch reject (defense in depth).
 
 > A guardrail against confused models, **not** a hardened sandbox. Run untrusted models in a container.
 
 ### Persistence & live UX
-- `/resume`, `/save`, `/load` — session resume with SQLite + FTS5
+- `/resume`, `/save`, `/load`: session resume with SQLite + FTS5
 - MCP server support (`cc_mcp/`); pip-installable console entry point
 - Bash output streams line-by-line; new-file writes return a unified-diff preview
 - Context-survival memory near compaction, named model profiles, reversible `/undo`
 
 ### Truncation alternation fix
-The load-bearing harness fix. When `max_tokens` truncates mid-tool-call, the old path popped the empty assistant turn — breaking OpenAI-compat user/assistant alternation and causing Qwen 9B to spam tool calls / other models to repeat prior text. Now replaced with a `[output cut off at max_tokens]` stub that preserves alternation.
+The load-bearing harness fix. When `max_tokens` truncates mid-tool-call, the old path popped the empty assistant turn, breaking OpenAI-compat user/assistant alternation and causing Qwen 9B to spam tool calls / other models to repeat prior text. Now replaced with a `[output cut off at max_tokens]` stub that preserves alternation.
 
 ---
 
@@ -226,14 +252,14 @@ Config and state live in `~/.promethean/` (migrated automatically from a pre-reb
 
 ## License
 
-This repo: **MIT** — see [LICENSE](LICENSE).
+This repo: **MIT**. See [LICENSE](LICENSE).
 
 Upstream license summary (always check upstream for the authoritative version):
-- **[cheetahclaws]** — MIT. The harness foundation; this repo is a fork.
-- **[TheTom/llama-cpp-turboquant]** — MIT (inherits from `llama.cpp`). TurboQuant KV-quantization fork.
-- **[domvox/triattention-ggml]** — see upstream `LICENSE`. Independent C/HIP TriAttention implementation.
-- **[domvox/llama.cpp-turboquant-hip]** — MIT (inherits from `llama.cpp`). The combined runtime binary.
-- **[Aider's `repomap.py`](https://github.com/Aider-AI/aider)** — Apache 2.0. Vendored under `agent_tools/repomap.py`.
+- **[cheetahclaws]**: MIT. The harness foundation; this repo is a fork.
+- **[TheTom/llama-cpp-turboquant]**: MIT (inherits from `llama.cpp`). TurboQuant KV-quantization fork.
+- **[domvox/triattention-ggml]**: see upstream `LICENSE`. Independent C/HIP TriAttention implementation.
+- **[domvox/llama.cpp-turboquant-hip]**: MIT (inherits from `llama.cpp`). The combined runtime binary.
+- **[Aider's `repomap.py`](https://github.com/Aider-AI/aider)**: Apache 2.0. Vendored under `agent_tools/repomap.py`.
 
 The TriAttention method is described in **Mao et al., 2026** ([arXiv:2604.04921][tria-paper]).
 
@@ -243,21 +269,21 @@ The TriAttention method is described in **Mao et al., 2026** ([arXiv:2604.04921]
 
 The two load-bearing inference contributions are **upstream work** integrated here, not invented here:
 
-- **TurboQuant** — Q4_0/Q4_0 KV-cache quantization with FlashAttention. Source: [TheTom/llama-cpp-turboquant] — the upstream `llama.cpp` fork used as the base.
-- **TriAttention** — eviction-based KV pruning that scores cached KV by trigonometric frequency prediction. Paper: Mao et al., 2026 ([arXiv:2604.04921][tria-paper]); independent C/HIP impl: [domvox/triattention-ggml] (calibration pipeline, runtime kernel, TRIA v2 stats format).
+- **TurboQuant**: Q4_0/Q4_0 KV-cache quantization with FlashAttention. Source: [TheTom/llama-cpp-turboquant], the upstream `llama.cpp` fork used as the base.
+- **TriAttention**: eviction-based KV pruning that scores cached KV by trigonometric frequency prediction. Paper: Mao et al., 2026 ([arXiv:2604.04921][tria-paper]); independent C/HIP impl: [domvox/triattention-ggml] (calibration pipeline, runtime kernel, TRIA v2 stats format).
 - **Combined fork** merging both into one binary: [domvox/llama.cpp-turboquant-hip] on `feature/triattention-scoring`.
 
 **Foundations**
-- **[Qwen team](https://huggingface.co/Qwen)** — the [Qwen3.5-9B](https://huggingface.co/Qwen) model. The agent is unusable without a capable mid-tier model; Qwen3.5 is the reason this works on consumer hardware.
-- **[ggml-org](https://github.com/ggml-org/llama.cpp)** — `llama.cpp`. Both inference forks branch off its mainline.
-- **[SafeRL-Lab/cheetahclaws](https://github.com/SafeRL-Lab/cheetahclaws)** — the Python harness this repo is forked from. ~40 KLoC of Claude-Code-style scaffolding (REPL, slash commands, tool registry, providers, MCP, session resume) built on top of.
+- **[Qwen team](https://huggingface.co/Qwen)**: the [Qwen3.5-9B](https://huggingface.co/Qwen) model. The agent is unusable without a capable mid-tier model; Qwen3.5 is the reason this works on consumer hardware.
+- **[ggml-org](https://github.com/ggml-org/llama.cpp)**: `llama.cpp`. Both inference forks branch off its mainline.
+- **[SafeRL-Lab/cheetahclaws](https://github.com/SafeRL-Lab/cheetahclaws)**: the Python harness this repo is forked from. ~40 KLoC of Claude-Code-style scaffolding (REPL, slash commands, tool registry, providers, MCP, session resume) built on top of.
 
 **Patterns borrowed**
-- **Aider** — vendored [`repomap.py`](https://aider.chat/docs/repomap.html) for symbol-graph navigation (tree-sitter + PageRank).
-- **Anthropic** — the [`think` tool](https://www.anthropic.com/news/claude-think-tool) pattern.
-- **[SWE-agent](https://github.com/SWE-agent/SWE-agent)** — agent-computer-interface design and the history-processor pattern.
-- **[OpenHands](https://github.com/All-Hands-AI/OpenHands)** — context-condenser pattern.
-- **[Cline](https://github.com/cline/cline)** — `FileContextTracker` (mtime + turn tagging on Read).
+- **Aider**: vendored [`repomap.py`](https://aider.chat/docs/repomap.html) for symbol-graph navigation (tree-sitter + PageRank).
+- **Anthropic**: the [`think` tool](https://www.anthropic.com/news/claude-think-tool) pattern.
+- **[SWE-agent](https://github.com/SWE-agent/SWE-agent)**: agent-computer-interface design and the history-processor pattern.
+- **[OpenHands](https://github.com/All-Hands-AI/OpenHands)**: context-condenser pattern.
+- **[Cline](https://github.com/cline/cline)**: `FileContextTracker` (mtime + turn tagging on Read).
 
 [SafeRL-Lab/cheetahclaws]: https://github.com/SafeRL-Lab/cheetahclaws
 
