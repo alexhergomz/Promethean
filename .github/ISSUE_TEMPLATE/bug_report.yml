@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a problem with Promethean
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the sections
+        below so the issue can be reproduced.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact command(s) you ran and what followed.
+      placeholder: |
+        1. Run `promethean ...`
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model / quantization
+      placeholder: "e.g. Qwen3.5-9B, TurboQuant Q4_0"
+    validations:
+      required: false
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU / VRAM
+      placeholder: "e.g. RTX 4060 8 GB"
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "e.g. Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      description: Paste any error output or tracebacks. Rendered as code, no backticks needed.
+      render: shell
+    validations:
+      required: false

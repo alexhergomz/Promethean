@@ -100,3 +100,24 @@ packages = [
 testpaths = ["tests"]
 python_files = ["test_*.py", "e2e_*.py"]
 asyncio_default_fixture_loop_scope = "function"
+
+# Ruff is configured as a guardrail for new code, not a one-shot rewrite of the
+# existing tree. The select set is intentionally scoped to the highest-signal
+# rules (pyflakes correctness + import ordering); broader stylistic/upgrade rules
+# (E, UP, B) are left out for now because the existing code predates linting and
+# enabling them would flood without source changes. E501 (line length) is ignored
+# in favour of the formatter's own wrapping. Tighten the select set over time as
+# the tree is cleaned up.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["web/static", "patches", "demos", "examples"]
+
+[tool.ruff.lint]
+select = ["F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+# Defaults (double quotes, space indent). Not enforced in CI yet — the existing
+# tree is unformatted; the pre-commit hook formats only the files you touch.
+

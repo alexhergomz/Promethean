@@ -11,7 +11,7 @@ git clone https://github.com/alexhergomz/Promethean.git
 cd promethean
 pip install -e .
 pip install pytest
-python -m pytest tests/ -x -q    # all 960+ tests should pass
+python -m pytest tests/ -x -q    # all 916 tests should pass
 python promethean.py            # run the REPL
 ```
 
@@ -54,7 +54,7 @@ promethean/
 │                            #   + overlays/<family>.md (vendor-documented quirks)
 │                            #   + fragments/<name>.md (conditional blocks).
 │                            #   See prompts/README.md for the overlay-admission policy.
-└── tests/                   # pytest suite (716+ tests)
+└── tests/                   # pytest suite (916 tests)
 ```
 
 ## Key Architecture Concepts
@@ -138,7 +138,7 @@ COMMAND_DEFS = {
 
 ### Hooks System
 
-Trishula does **not** have a generic event-based hooks system. The `checkpoint/hooks.py` module wraps Write/Edit/NotebookEdit tools to create file backups before writes. There is no `hooks.json` and no `hook_session_start`/`hook_stop` events.
+Promethean does **not** have a generic event-based hooks system. The `checkpoint/hooks.py` module wraps Write/Edit/NotebookEdit tools to create file backups before writes. There is no `hooks.json` and no `hook_session_start`/`hook_stop` events.
 
 ### Bridges
 
@@ -178,7 +178,7 @@ Telegram, WeChat, and Slack bridges poll for messages and route them through `Ru
 
 Before submitting a PR:
 
-- [ ] `python -m pytest tests/ -x -q` passes (all 716+ tests)
+- [ ] `python -m pytest tests/ -x -q` passes (all 916 tests)
 - [ ] No new dependencies added to core without discussion
 - [ ] Runtime state uses `RuntimeContext`, not `config["_xxx"]`
 - [ ] Plugin tools export `TOOL_DEFS`, not direct `register_tool()` calls
@@ -188,4 +188,4 @@ Before submitting a PR:
 
 ## Questions?
 
-Open an issue or start a discussion on the [GitHub repo](https://github.com/alexhergomz/coding_agent).
+Open an issue or start a discussion on the [GitHub repo](https://github.com/alexhergomz/Promethean).

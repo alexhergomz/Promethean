@@ -1,0 +1,20 @@
+# Run `pre-commit install` once to enable these hooks on `git commit`.
+# Hooks operate only on the files you stage, so they act as a guardrail for new
+# changes rather than rewriting the whole tree. Config (rules, excludes) lives in
+# pyproject.toml under [tool.ruff].
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.16
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: Promethean
+abstract: >-
+  A full-stack autonomous coding and research agent that runs a complete agent
+  loop locally on consumer hardware.
+type: software
+authors:
+  - given-names: Alex
+    family-names: Hern
+    alias: alexhergomz
+  - alias: luisfsandsilva-star
+repository-code: "https://github.com/alexhergomz/Promethean"
+url: "https://github.com/alexhergomz/Promethean"
+version: "3.05.76"
+# NOTE(maintainer): the SPDX `license:` field is intentionally omitted while the
+# repository license is reconciled (the LICENSE file and project metadata
+# currently disagree). Add e.g. `license: MIT` once that is resolved.
+# NOTE(maintainer): confirm author display names and add ORCIDs / date-released
+# if you would like richer citation metadata.
