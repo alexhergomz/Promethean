@@ -36,9 +36,9 @@ data        = ["faker"]
 web         = ["sqlalchemy>=2.0", "bcrypt>=4.0", "PyJWT>=2.8.0"]
 # tree-sitter-language-pack is capped <1.8: 1.8.x ships a custom builtins.Parser
 # whose .parse() wants str (not bytes) and breaks the vendored aider repomap.
-graph       = ["diskcache>=5", "grep-ast>=0.9", "pygments>=2", "tree-sitter>=0.25,<0.26", "tree-sitter-language-pack>=1.6,<1.8", "networkx>=3", "numpy", "scipy"]
+graph       = ["diskcache>=5", "grep-ast>=0.9", "pygments>=2", "tree-sitter>=0.25,<0.27", "tree-sitter-language-pack>=1.6,<1.8", "networkx>=3", "numpy", "scipy"]
 dev         = ["pytest"]
-all         = ["sounddevice", "faster-whisper", "openai-whisper", "ctranslate2", "edge-tts", "torch", "Pillow", "prompt_toolkit>=3.0.43", "playwright", "pymupdf", "openpyxl", "pypdf", "pdfminer.six", "python-docx", "pytesseract", "imageio-ffmpeg", "yfinance>=0.2.30", "rank-bm25>=0.2.2", "akshare", "scholarly", "qrcode", "faker", "sqlalchemy>=2.0", "bcrypt>=4.0", "PyJWT>=2.8.0", "diskcache>=5", "grep-ast>=0.9", "pygments>=2", "tree-sitter>=0.25,<0.26", "tree-sitter-language-pack>=1.6,<1.8", "networkx>=3", "numpy", "scipy"]
+all         = ["sounddevice", "faster-whisper", "openai-whisper", "ctranslate2", "edge-tts", "torch", "Pillow", "prompt_toolkit>=3.0.43", "playwright", "pymupdf", "openpyxl", "pypdf", "pdfminer.six", "python-docx", "pytesseract", "imageio-ffmpeg", "yfinance>=0.2.30", "rank-bm25>=0.2.2", "akshare", "scholarly", "qrcode", "faker", "sqlalchemy>=2.0", "bcrypt>=4.0", "PyJWT>=2.8.0", "diskcache>=5", "grep-ast>=0.9", "pygments>=2", "tree-sitter>=0.25,<0.27", "tree-sitter-language-pack>=1.6,<1.8", "networkx>=3", "numpy", "scipy"]
 
 [project.scripts]
 promethean = "promethean:main"
