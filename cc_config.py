@@ -36,8 +36,13 @@ def migrate_legacy_config_dir() -> bool:
 DEFAULTS = {
     "model":            "ollama/gemma4:e4b",
     "max_tokens":       40000,
-    "permission_mode":  "auto",   # auto | accept-all | manual
+    "permission_mode":  "auto",   # auto | accept-all | manual | plan
     "verbose":          False,
+    # Recover tool calls a model wrote as text (JSON/XML in content) when the
+    # provider didn't populate native tool_calls — see
+    # providers._recover_text_tool_calls. Needed for many local models
+    # (Qwen-Coder via llama.cpp/Ollama) that emit calls as text.
+    "recover_text_tool_calls": True,
     # Tri-state: None = unset (use provider default), True = ON, False = explicit OFF.
     # The explicit-OFF state matters for DeepSeek v4 where the server default
     # is ON; providers.py only injects the disable toggle when value is False.

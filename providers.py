@@ -1044,6 +1044,48 @@ def stream_ollama(
     yield AssistantTurn(text, tool_calls, 0, 0, 0, 0)
 
 
+def _recover_text_tool_calls(turn: "AssistantTurn", tool_schemas: list, config: dict) -> None:
+    """Recover tool calls a model wrote as text and attach them to ``turn``.
+
+    Mutates ``turn`` in place: on success, ``turn.tool_calls`` is populated and
+    ``turn.text`` is stripped of the raw JSON/XML block. When a tool-shaped
+    block names an *unregistered* tool (likely hallucinated), print a visible
+    warning so the failure is never silent. Controlled by config
+    ``recover_text_tool_calls`` (default on); any parser error is swallowed so a
+    malformed response can never break the turn.
+    """
+    if not config.get("recover_text_tool_calls", True):
+        return
+    if not turn.text or not tool_schemas:
+        return
+    try:
+        import tool_call_recovery as _tcr
+        valid = {t.get("name") for t in tool_schemas if t.get("name")}
+        recovered, cleaned, unknown = _tcr.recover_tool_calls(turn.text, valid)
+    except Exception:
+        return
+
+    if recovered:
+        turn.tool_calls = recovered
+        turn.text = cleaned
+        if os.environ.get("CC_DEBUG_TRUNC"):
+            import sys as _sys
+            _sys.stderr.write(
+                f"[trace] recovered {len(recovered)} tool call(s) from text: "
+                f"{[c['name'] for c in recovered]}\n"
+            )
+    elif unknown:
+        # Looks like a tool call but names a tool we don't have — surface it
+        # instead of the historical silent no-op.
+        import sys as _sys
+        _sys.stderr.write(
+            f"\n\033[33m[warn] The model emitted what looks like a call to "
+            f"unknown tool(s): {', '.join(unknown)}. Not dispatched — the model "
+            f"may be hallucinating a tool, or emitting an unsupported call "
+            f"format.\033[0m\n"
+        )
+
+
 def stream(
     model: str,
     system: str,
@@ -1120,6 +1162,13 @@ def stream(
         for event in inner:
             if isinstance(event, AssistantTurn):
                 breaker.record_success()
+                # Parse-from-text tool-call fallback. Many local models
+                # (Qwen-Coder via llama.cpp/Ollama, etc.) emit tool calls as
+                # JSON/XML in the message *content* instead of native
+                # tool_calls. Without this the turn silently no-ops. Recover
+                # any tool-shaped blocks that name a registered tool.
+                if not event.tool_calls:
+                    _recover_text_tool_calls(event, tool_schemas, config)
                 _log.info("api_call_done", session_id=session_id,
                           provider=provider_name, model=model_name,
                           in_tokens=event.in_tokens, out_tokens=event.out_tokens,

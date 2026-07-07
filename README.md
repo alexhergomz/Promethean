@@ -102,6 +102,13 @@ The inference layer is a plain OpenAI-compatible HTTP endpoint, so the TurboQuan
 
 Switch any time with `/model <name>` in the REPL or `-m` on the CLI. The provider is auto-detected from the model name (`gpt-4o`, `gemini-2.0-flash`) or set with an explicit prefix (`ollama/qwen2.5-coder`, `kimi:moonshot-v1-32k`). Named profiles (`/model qwen`) bundle model, provider, and base URL into one alias. Run it yourself when you want to; rent when you don't.
 
+**Tool calling with local models.** An agent needs the model to emit tool calls, and small local models are inconsistent about the wire format. Two things make this robust:
+
+- For `llama-server`, the model's chat template must be applied so it can emit native `tool_calls` — pass `--jinja`. Promethean's auto-started server includes it by default (`_DEFAULT_ARGS` in `server_autostart.py`); if you launch `llama-server` yourself, add `--jinja` (and set your own args via `/config llama_server_args=…`).
+- Many models still write the call as JSON or XML in the message *text* instead of the native field. Promethean recovers those automatically (`providers._recover_text_tool_calls`) and dispatches them, so the agent doesn't silently no-op. If a model emits a call for a tool that doesn't exist, you get a visible warning instead of nothing. Toggle with `/config recover_text_tool_calls=false`.
+
+New here? [`docs/MODELS.md`](docs/MODELS.md) is the practical guide to picking, downloading, and wiring up a model (local GGUF, Ollama/LM Studio, or cloud).
+
 ---
 
 ## At a glance
@@ -232,6 +239,7 @@ Multi-layer defenses:
 - MCP server support (`cc_mcp/`); pip-installable console entry point
 - Bash output streams line-by-line; new-file writes return a unified-diff preview
 - Context-survival memory near compaction, named model profiles, reversible `/undo`
+- **ESC** aborts an in-flight turn cleanly and keeps the session (TTY only); Ctrl+C still works too
 
 ### Truncation alternation fix
 The load-bearing harness fix. When `max_tokens` truncates mid-tool-call, the old path popped the empty assistant turn, breaking OpenAI-compat user/assistant alternation and causing Qwen 9B to spam tool calls / other models to repeat prior text. Now replaced with a `[output cut off at max_tokens]` stub that preserves alternation.

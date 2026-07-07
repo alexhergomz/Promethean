@@ -15,7 +15,7 @@ Options:
 Slash commands in REPL:
   /help       Show this help
   /clear      Clear conversation
-  /model [m]  Show or set model
+  /model [m]  Show or set model (/model recommend for hardware-matched GGUFs)
   /config     Show config / set key=value
   /save [f]   Save session to file
   /load [f]   Load session from file
@@ -683,6 +683,7 @@ def repl(config: dict, initial_prompt: str = None):
     from cc_config import HISTORY_FILE
     from context import build_system_prompt
     from agent import AgentState, run, TextChunk, ThinkingChunk, ToolStart, ToolEnd, TurnDone, PermissionRequest
+    from interrupt import EscInterrupt
 
     def _status_footer(state, config) -> str:
         """1-line always-visible status: model · ctx% · $session · failover.
@@ -734,12 +735,14 @@ def repl(config: dict, initial_prompt: str = None):
         except Exception:
             return ""
 
-    # Shift+Tab cycles the permission mode: auto → accept-all → plan → auto.
-    # Plan entry is a "light" toggle (no description required): it saves the
-    # previous mode and lazily creates the plan file, then the next user
-    # message becomes the planning request (the plan-mode system fragment is
-    # injected whenever permission_mode == "plan"). /plan <desc> still works.
-    _PERM_CYCLE = ("auto", "accept-all", "plan")
+    # Shift+Tab cycles the permission mode: auto → accept-all → manual → plan → auto.
+    # All four modes are keyboard-reachable (manual was previously only settable
+    # via /permissions). Plan entry is a "light" toggle (no description
+    # required): it saves the previous mode and lazily creates the plan file,
+    # then the next user message becomes the planning request (the plan-mode
+    # system fragment is injected whenever permission_mode == "plan").
+    # /plan <desc> still works.
+    _PERM_CYCLE = ("auto", "accept-all", "manual", "plan")
 
     def _cycle_permission_mode():
         import runtime as _rt
@@ -912,8 +915,27 @@ def repl(config: dict, initial_prompt: str = None):
             _post_tool_buf = []   # text chunks after tool (to check for duplicates)
             _duplicate_suppressed = False
 
+            # ESC aborts an in-flight turn cleanly (keeps the session). No-op
+            # off-TTY / on Windows. Not armed for background/proactive turns
+            # (no interactive user at the keyboard).
+            _esc = EscInterrupt()
+            if not is_background:
+                _esc.start()
+
             try:
-                for event in run(user_input, state, config, system_prompt):
+                _gen = run(user_input, state, config, system_prompt,
+                           cancel_check=_esc.triggered)
+                for event in _gen:
+                    # User pressed ESC mid-turn: abort cleanly, keep session.
+                    if _esc.triggered():
+                        _stop_tool_spinner()
+                        flush_response()
+                        try:
+                            _gen.close()
+                        except Exception:
+                            pass
+                        print(clr("\n  [interrupted — session kept]", "yellow"))
+                        break
                     # Stop spinner only when visible output arrives
                     if spinner_shown:
                         show_thinking = isinstance(event, ThinkingChunk) and verbose
@@ -982,7 +1004,12 @@ def repl(config: dict, initial_prompt: str = None):
                     elif isinstance(event, PermissionRequest):
                         _stop_tool_spinner()
                         flush_response()
+                        # Release the terminal so the y/N prompt can read stdin
+                        # (the ESC watcher would otherwise swallow the keys).
+                        _esc.stop()
                         event.granted = ask_permission_interactive(event.description, config)
+                        if not is_background:
+                            _esc.start()
                         # Live will restart automatically on next TextChunk
 
                     elif isinstance(event, ToolEnd):
@@ -1068,6 +1095,9 @@ def repl(config: dict, initial_prompt: str = None):
                 if cerr.hint:
                     warn(f"Hint: {cerr.hint}")
                 warn("Your conversation is intact. You can retry or type a new message.")
+            finally:
+                # Always restore the terminal, even on the Ctrl+C re-raise path.
+                _esc.stop()
 
             _stop_tool_spinner()
             flush_response()  # stop Live, commit any remaining text

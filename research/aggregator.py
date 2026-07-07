@@ -187,30 +187,57 @@ def research(
 
     # Fan out in parallel. Thread pool size = min(len(specs), 12) — most
     # sources are I/O bound so threads beat processes here.
-    with _cf.ThreadPoolExecutor(max_workers=min(len(specs), 12)) as ex:
+    #
+    # A single hung source must not kill the whole run. as_completed() raises
+    # TimeoutError once the overall budget expires; we catch it and record any
+    # futures that never finished as timed-out sources, so partial results from
+    # the sources that *did* complete are always returned (graceful
+    # degradation). shutdown(wait=False) avoids blocking on the stragglers.
+    ex = _cf.ThreadPoolExecutor(max_workers=min(len(specs), 12))
+    try:
         futures = {ex.submit(_run, s): s for s in specs}
-        for fut in _cf.as_completed(futures, timeout=source_timeout * 2):
+        pending = set(futures)
+        budget = source_timeout * 2
+        try:
+            for fut in _cf.as_completed(futures, timeout=budget):
+                pending.discard(fut)
+                spec = futures[fut]
+                try:
+                    name, rs, st, from_cache = fut.result(timeout=source_timeout)
+                except Exception as e:
+                    st = SourceStatus(
+                        name=spec.name, ok=False,
+                        error=f"{type(e).__name__}: {str(e)[:160]}",
+                    )
+                    rs = []
+                    from_cache = False
+                all_results.extend(rs)
+                statuses.append(st)
+                if from_cache:
+                    cache_hits += 1
+                if progress_cb:
+                    if st.skipped_reason:
+                        progress_cb(spec.name, "skipped")
+                    elif not st.ok:
+                        progress_cb(spec.name, "error")
+                    else:
+                        progress_cb(spec.name, "done")
+        except _cf.TimeoutError:
+            pass  # Stragglers handled below; keep whatever finished in time.
+
+        # Record sources that never returned within the budget as timeouts
+        # rather than letting the exception abort the entire research run.
+        for fut in pending:
             spec = futures[fut]
-            try:
-                name, rs, st, from_cache = fut.result(timeout=source_timeout)
-            except Exception as e:
-                st = SourceStatus(
-                    name=spec.name, ok=False,
-                    error=f"{type(e).__name__}: {str(e)[:160]}",
-                )
-                rs = []
-                from_cache = False
-            all_results.extend(rs)
-            statuses.append(st)
-            if from_cache:
-                cache_hits += 1
+            fut.cancel()
+            statuses.append(SourceStatus(
+                name=spec.name, ok=False,
+                error=f"TimeoutError: no result within {budget:.0f}s budget",
+            ))
             if progress_cb:
-                if st.skipped_reason:
-                    progress_cb(spec.name, "skipped")
-                elif not st.ok:
-                    progress_cb(spec.name, "error")
-                else:
-                    progress_cb(spec.name, "done")
+                progress_cb(spec.name, "error")
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
     # Dedupe + rank + cap
     deduped = _rank.dedupe(all_results)
