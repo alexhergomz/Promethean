@@ -241,8 +241,23 @@ def set_spinner_tail(line: str) -> None:
 def clear_spinner_tail() -> None:
     set_spinner_tail("")
 
+def _stdout_is_tty() -> bool:
+    """True only when stdout is an interactive terminal.
+
+    Off-TTY (piped, redirected to a file, CI, `-p` captured to a variable) the
+    spinner's \\r frames don't collapse to one line — every 0.1s frame becomes a
+    new fragment, flooding the output. Suppress the animation there entirely.
+    """
+    try:
+        return sys.stdout.isatty()
+    except Exception:
+        return False
+
+
 def _start_tool_spinner():
     global _tool_spinner_thread
+    if not _stdout_is_tty():
+        return   # Non-interactive output: no animation (would flood the stream).
     if _tool_spinner_thread and _tool_spinner_thread.is_alive():
         return
     import random

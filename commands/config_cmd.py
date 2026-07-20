@@ -17,6 +17,13 @@ def cmd_model(args: str, _state, config) -> bool:
 
     arg = (args or "").strip()
 
+    # ── Hardware-matched recommendations ──────────────────────────────────
+    # `/model recommend [budget_gb] [family]` — narrow the huge quant lists to
+    # what actually fits this machine.
+    parts = arg.split()
+    if parts and parts[0].lower() in ("recommend", "suggest", "recommendations"):
+        return _cmd_model_recommend(parts[1:], config)
+
     # ── Profile quick-switch ──────────────────────────────────────────────
     # `/model <profile>` is the fast path: one word swaps model+base_url+
     # config knobs in one step. Falls through to full lookup if `arg`
@@ -79,6 +86,8 @@ def cmd_model(args: str, _state, config) -> bool:
         info("  e.g. /model gpt-4o")
         info("  e.g. /model ollama/qwen2.5-coder")
         info("  e.g. /model kimi:moonshot-v1-32k")
+        info(clr("\n  /model recommend", "cyan")
+             + clr("  — hardware-matched local GGUF suggestions (Qwen3.5, Gemma 4, Nemotron)", "dim"))
     else:
         m = args.strip()
         # "/model ollama" with no model name → interactive picker
@@ -360,4 +369,127 @@ def cmd_cwd(args: str, _state, config) -> bool:
             ok(f"Changed directory to: {os.getcwd()}")
         except Exception as e:
             err(str(e))
+    return True
+
+
+def _cmd_model_recommend(argv: list, config) -> bool:
+    """Render hardware-matched local-model suggestions (`/model recommend`)."""
+    import model_recommend as _mr
+
+    # Parse optional args in any order: <budget_gb>, ctx=<K>, fp16, <family>.
+    # Bare small number = context target (K); larger/decimal number = budget GB.
+    budget_override = None
+    target_ctx_k = None
+    kv_div = _mr.DEFAULT_KV_DIV
+    families = None
+    for a in argv:
+        al = a.lower()
+        if al in ("fp16", "nokv", "nocompress"):
+            kv_div = 1.0
+            continue
+        if al.startswith("ctx="):
+            try:
+                target_ctx_k = float(al[4:].rstrip("k"))
+            except ValueError:
+                pass
+            continue
+        try:
+            n = float(a)
+            # Heuristic: a plain integer ≥ 40 is a context length in K; else GB.
+            if a.isdigit() and n >= 40:
+                target_ctx_k = n
+            else:
+                budget_override = n
+            continue
+        except ValueError:
+            pass
+        families = (families or []) + [a]
+
+    hw = _mr.detect_hardware()
+    budget = budget_override if budget_override else hw.budget_gb
+    if not budget:
+        err("Couldn't detect memory and no budget given.")
+        info("  Try:  /model recommend 8   (your GPU VRAM or usable RAM, in GB)")
+        return True
+
+    # If the user runs a local server with a known context window, default the
+    # sizing target to it (their actual context) unless they passed ctx=.
+    if target_ctx_k is None and config.get("context_limit"):
+        target_ctx_k = config["context_limit"] / 1000.0
+
+    # Header: what we detected and what budget we're using.
+    ram = f"{hw.ram_gb:.0f} GB RAM" if hw.ram_gb else "RAM unknown"
+    vram = f"{hw.vram_gb:.1f} GB VRAM" if hw.vram_gb else "no discrete GPU detected"
+    info(f"Hardware:  {ram} · {vram}")
+    src = "override" if budget_override else ("GPU-resident" if hw.vram_gb else "system RAM")
+    info(f"Budget:    {clr(f'{budget:.1f} GB', 'cyan')}  ({src})   "
+         + clr("override: /model recommend <GB>", "dim"))
+    kv_desc = "fp16 KV" if kv_div == 1.0 else f"Q4 KV cache (÷{kv_div:.0f}: TurboQuant / llama.cpp -ctk q4_0)"
+    ctx_desc = f"{target_ctx_k:.0f}K" if target_ctx_k else "each model's max"
+    info(f"Sizing:    quant chosen so {clr(ctx_desc, 'cyan')} context fits, assuming {kv_desc}   "
+         + clr("(ctx=<K> or fp16 to change)", "dim"))
+    info(clr("Fetching quantizations from Hugging Face …", "dim"))
+
+    recs = _mr.build_recommendations(budget, families,
+                                     target_ctx_k=target_ctx_k, kv_quant_div=kv_div)
+    real = [r for r in recs if "recommended" in r]
+    if not real:
+        warn("No catalog model fits that budget (or HF was unreachable).")
+        if any(r.get("fetch_failed") for r in recs):
+            info("  Some repos couldn't be reached — check your connection and retry.")
+        else:
+            info("  Try a larger budget, e.g. /model recommend 16")
+        return True
+
+    info("")
+    info(clr(f"Recommended for ~{budget:.0f} GB", "bold")
+         + clr("  (KV-efficient families first; quant sized to fit the full context)", "dim"))
+    info("")
+
+    def _fmt(pick):
+        cov = "" if pick.fits_target else clr("  (max it reaches)", "dim")
+        return (f"{pick.quant.label} ({pick.quant.size_gb:.2f} GB) · "
+                f"fits ~{pick.ctx_k:.0f}K ctx{cov}")
+
+    top = None
+    for i, r in enumerate(recs):
+        m = r["model"]
+        if r.get("fetch_failed"):
+            info(f"  {clr(m.key, 'dim')}  {clr('(HF unreachable)', 'red')}")
+            continue
+        star = clr(" ★", "yellow") if top is None else ""
+        if top is None:
+            top = r
+        badges = " ".join(clr(f"[{t}]", "dim") for t in m.tags)
+        tgt = r["target_ctx_k"]
+        info(f"  {clr(m.key, 'cyan')}{star}  {clr(m.family, 'dim')}  "
+             + clr(f"max {tgt}K", "dim") + f"  {badges}")
+        info(f"      → {clr(_fmt(r['recommended']), 'green')}")
+        rq = r["recommended"].quant
+        if rq.filename:
+            info(f"        {clr(_mr.download_url(m.repo, rq.filename), 'dim')}")
+        if r.get("alt_quality"):
+            info(f"        higher fidelity: {_fmt(r['alt_quality'])}")
+        if r.get("alt_context"):
+            info(f"        more context:    {_fmt(r['alt_context'])}")
+        if m.note:
+            info(f"      {clr(m.note, 'dim')}")
+
+    # Concrete next steps for the top pick.
+    if top:
+        m = top["model"]
+        q = top["recommended"].quant
+        fname = q.filename or (m.key + ".gguf")
+        url = _mr.download_url(m.repo, q.filename) if q.filename else \
+            f"https://huggingface.co/{m.repo}"
+        local = f"~/.promethean/models/{fname}"
+        info("")
+        info(clr(f"To use {m.key} ({q.label}):", "bold"))
+        info(f"  1. {clr('mkdir -p ~/.promethean/models', 'cyan')}")
+        info(f"  2. {clr(f'curl -L -o {local} \\\\', 'cyan')}")
+        info(f"       {clr(url, 'cyan')}")
+        info(f"  3. {clr(f'/config llama_model_path={local}', 'cyan')}")
+        info(f"     {clr('/config model=custom/' + m.key, 'cyan')}   "
+             + clr("(loopback custom_base_url autostarts llama-server)", "dim"))
+        info(clr("  Full guide: docs/MODELS.md", "dim"))
     return True

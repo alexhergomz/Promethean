@@ -26,7 +26,11 @@ from urllib.parse import urlparse
 import logging_utils as _log
 
 _LOOPBACK = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
-_DEFAULT_ARGS = ["-ngl", "99", "-fa", "on"]
+# --jinja applies the model's chat template so llama-server can emit native
+# tool_calls. Without it, tool-capable models fall back to writing calls as
+# text (which the harness recovers — see providers._recover_text_tool_calls —
+# but native is cleaner). On by default; override via config.llama_server_args.
+_DEFAULT_ARGS = ["-ngl", "99", "-fa", "on", "--jinja"]
 
 
 def _health_ok(base_root: str, timeout: float = 2.0) -> bool:
@@ -57,6 +61,69 @@ def ensure_local_server(config: dict) -> None:
         _ensure(config)
     except Exception as exc:  # never let startup convenience break the REPL
         _log.debug("autostart_skipped", error=str(exc)[:200])
+    sync_context_limit(config)
+
+
+def _probe_n_ctx(base_root: str, timeout: float = 3.0) -> int | None:
+    """Query llama-server /props for the served per-slot context window (n_ctx).
+
+    Returns the integer n_ctx, or None if unavailable. llama-server reports it
+    under ``default_generation_settings.n_ctx`` (per slot); older builds expose
+    a top-level ``n_ctx``.
+    """
+    try:
+        import httpx
+        r = httpx.get(f"{base_root}/props", timeout=timeout)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+    except Exception:
+        return None
+    dgs = data.get("default_generation_settings") or {}
+    for v in (dgs.get("n_ctx"), data.get("n_ctx")):
+        try:
+            n = int(v)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def sync_context_limit(config: dict) -> None:
+    """Align config['context_limit'] with a local llama-server's actual n_ctx.
+
+    Without this, the harness assumes the 128k provider default even when the
+    served window is smaller (e.g. a Mac llama-server at n_ctx=32768), so
+    compaction only triggers *after* the real window has already overflowed
+    (macOS review §12). Acts only on a local (loopback) ``custom`` endpoint and
+    only when the user hasn't pinned ``context_limit`` themselves — advanced
+    multi-slot rigs set it explicitly and are left untouched. Never raises.
+    """
+    try:
+        if config.get("context_limit"):
+            return  # explicit value (user/setup/multi-slot) wins.
+        from providers import detect_provider
+        if detect_provider(config.get("model", "")) != "custom":
+            return
+        base_url = (config.get("custom_base_url")
+                    or os.environ.get("CUSTOM_BASE_URL") or "").strip()
+        if not base_url:
+            return
+        if (urlparse(base_url).hostname or "") not in _LOOPBACK:
+            return
+        root = _server_root(base_url)
+        if not _health_ok(root):
+            return
+        n_ctx = _probe_n_ctx(root)
+        if not n_ctx:
+            return
+        config["context_limit"] = n_ctx
+        print(f"[promethean] detected context window n_ctx={n_ctx:,} from "
+              f"llama-server; compaction will use it.", file=sys.stderr)
+        _log.info("context_limit_detected", n_ctx=n_ctx)
+    except Exception as exc:
+        _log.debug("context_limit_probe_skipped", error=str(exc)[:200])
 
 
 def _ensure(config: dict) -> None:
