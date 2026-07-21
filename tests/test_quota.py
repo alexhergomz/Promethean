@@ -147,10 +147,11 @@ class TestRecordUsage:
         assert data["tokens"] == 1300
 
     def test_cost_is_recorded(self):
-        record_usage(self.sid, "claude-sonnet-4-6", 1_000_000, 0)
-        # sonnet input is $3/M tokens → $3.00
+        # Local llama.cpp inference has no per-token price, so usage records a
+        # zero cost. The plumbing still runs; only the amount is 0.
+        record_usage(self.sid, "custom/qwen3.5-9b", 1_000_000, 0)
         with quota._lock:
-            assert quota._sess_cost[self.sid] == pytest_approx(3.0, rel=0.01)
+            assert quota._sess_cost[self.sid] == pytest_approx(0.0)
 
 
 def pytest_approx(value, rel=None):

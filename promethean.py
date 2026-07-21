@@ -29,7 +29,7 @@ Slash commands in REPL:
   /permissions [mode]  Set permission mode
   /cwd [path] Show or change working directory
   /compact    Compact conversation history to save context space
-  /init       Initialize a CLAUDE.md file in the current directory
+  /init       Write a starter CLAUDE.md, pre-filled from a scan of the repo
   /export [f] Export conversation history to a Markdown file
   /copy       Copy the last assistant response to clipboard
   /doctor     Diagnose installation health and tool connectivity
@@ -194,7 +194,7 @@ from commands.session import (
 # ── Config commands ────────────────────────────────────────────────────────
 from commands.config_cmd import (
     cmd_model, cmd_config, cmd_api, cmd_failover, cmd_verbose, cmd_thinking,
-    cmd_permissions, cmd_cwd, _interactive_ollama_picker,
+    cmd_permissions, cmd_cwd,
 )
 
 # ── Core commands ──────────────────────────────────────────────────────────
@@ -1077,17 +1077,6 @@ def repl(config: dict, initial_prompt: str = None):
             except Exception as e:
                 _stop_tool_spinner()
                 flush_response()
-                import urllib.error
-                # Catch 404 Not Found (Ollama model missing)
-                if isinstance(e, urllib.error.HTTPError) and e.code == 404:
-                    from providers import detect_provider
-                    if detect_provider(config["model"]) == "ollama":
-                        err(f"Ollama model '{config['model']}' not found.")
-                        if _interactive_ollama_picker(config):
-                            if state.messages and state.messages[-1]["role"] == "user":
-                                state.messages.pop()
-                            return run_query(user_input, is_background)
-                        return
                 # ── Actionable error messages via error classifier ────────
                 from error_classifier import classify as _classify_err
                 cerr = _classify_err(e)

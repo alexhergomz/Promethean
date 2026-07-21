@@ -1,4 +1,4 @@
-"""System context: CLAUDE.md, git info, cwd injection.
+"""System context: project instructions (AGENTS.md / CLAUDE.md), git info, cwd injection.
 
 Prompt assembly pipeline:
 
@@ -79,48 +79,61 @@ def get_git_info() -> str:
         return ""
 
 
+# Project-instruction files, in load order. AGENTS.md is the cross-tool
+# convention; CLAUDE.md is kept for compatibility with repos already set up
+# for it. Both are loaded when present.
+_CONTEXT_FILENAMES = ("CLAUDE.md", "AGENTS.md")
+
+
+def _read_context_file(path: Path, label: str, warnings: list) -> str | None:
+    """Read one instruction file, scanning for prompt injection first.
+
+    Returns the labelled block, or None if the file is unreadable or a
+    threat pattern was found (in which case a warning is appended).
+    """
+    try:
+        text = path.read_text()
+    except Exception:
+        return None
+    threat = _scan_for_threats(text, f"{label} ({path})")
+    if threat:
+        warnings.append(threat)
+        return None
+    return f"[{label}: {path}]\n{text}"
+
+
 def get_claude_md() -> str:
-    """Load CLAUDE.md from cwd or parents, and ~/.claude/CLAUDE.md.
+    """Load project-instruction files: AGENTS.md and CLAUDE.md, from both
+    ~/.claude/ (global) and the nearest ancestor of cwd (project).
 
     Each file is scanned for prompt injection patterns before inclusion.
+    The historical name is kept so callers and tests need not change.
     """
-    content_parts = []
-    warnings = []
+    content_parts: list[str] = []
+    warnings: list[str] = []
 
-    # Global CLAUDE.md
-    global_md = Path.home() / ".claude" / "CLAUDE.md"
-    if global_md.exists():
-        try:
-            text = global_md.read_text()
-            threat = _scan_for_threats(text, f"Global CLAUDE.md ({global_md})")
-            if threat:
-                warnings.append(threat)
-            else:
-                content_parts.append(f"[Global CLAUDE.md]\n{text}")
-        except Exception:
-            pass
+    home = Path.home()
+    for name in _CONTEXT_FILENAMES:
+        global_md = home / ".claude" / name
+        if global_md.exists():
+            part = _read_context_file(global_md, f"Global {name}", warnings)
+            if part:
+                content_parts.append(part)
 
-    # Project CLAUDE.md (walk up from cwd)
-    p = Path.cwd()
-    for _ in range(10):
-        candidate = p / "CLAUDE.md"
-        if candidate.exists():
-            try:
-                text = candidate.read_text()
-                threat = _scan_for_threats(text, f"Project CLAUDE.md ({candidate})")
-                if threat:
-                    warnings.append(threat)
-                else:
-                    content_parts.append(f"[Project CLAUDE.md: {candidate}]\n{text}")
-            except Exception:
-                pass
-            break
-        parent = p.parent
-        if parent == p:
-            break
-        p = parent
+    for name in _CONTEXT_FILENAMES:
+        p = Path.cwd()
+        for _ in range(10):
+            candidate = p / name
+            if candidate.exists():
+                part = _read_context_file(candidate, f"Project {name}", warnings)
+                if part:
+                    content_parts.append(part)
+                break
+            if p.parent == p:
+                break
+            p = p.parent
 
-    # Print warnings to stderr so user sees them
+    # Print warnings to stderr so the user sees them.
     if warnings:
         import sys
         for w in warnings:
@@ -128,7 +141,7 @@ def get_claude_md() -> str:
 
     if not content_parts:
         return ""
-    return "\n# Memory / CLAUDE.md\n" + "\n\n".join(content_parts) + "\n"
+    return "\n# Project context\n" + "\n\n".join(content_parts) + "\n"
 
 
 def get_platform_hints() -> str:

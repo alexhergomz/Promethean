@@ -29,7 +29,7 @@ Full-stack coding agent for hardware you already own.
 
 ## What is this
 
-A self-contained coding & research agent. In its flagship mode it runs **entirely on your machine**, on a single 8 GB consumer GPU: no API keys, no metering, no request leaves the box. The 8 GB figure is what the local inference stack is tuned for, not an entry requirement. The harness speaks plain OpenAI-compatible HTTP, so the same agent also drives Ollama, LM Studio, or any cloud provider on whatever hardware you have (see [Bring your own model](#bring-your-own-model)).
+A self-contained coding & research agent. In its flagship mode it runs **entirely on your machine**, on a single 8 GB consumer GPU: no API keys, no metering, no request leaves the box. The 8 GB figure is what the local inference stack is tuned for, not an entry requirement. The harness speaks plain OpenAI-compatible HTTP, so the same agent also drives any other OpenAI-compatible server (Ollama, LM Studio, vLLM) on whatever hardware you have (see [Bring your own model](#bring-your-own-model)).
 
 It's a fork of [cheetahclaws] (a Python-native, Claude-Code-style harness) wired onto two upstream `llama.cpp` research forks for the inference layer. Three layers, one binary:
 
@@ -61,12 +61,11 @@ pipx install .             # global `promethean` command, runnable from any dire
                            # add [graph] for symbol-graph nav, [all] for everything
 ```
 
-**Fastest start: a model you already have.** No GPU and no inference build required; point Promethean at any OpenAI-compatible backend, local or cloud:
+**Fastest start: a server you already run.** No GPU and no inference build required; point Promethean at any OpenAI-compatible endpoint — llama-server, or an Ollama / LM Studio / vLLM server exposing the OpenAI API:
 
 ```bash
-promethean -m ollama/qwen2.5-coder   # existing local server (Ollama, LM Studio, ...)
-promethean -m gpt-4o                 # cloud (needs OPENAI_API_KEY)
-promethean -m gemini-2.0-flash       # cloud (needs GEMINI_API_KEY)
+/config custom_base_url=http://127.0.0.1:8080/v1   # in the REPL
+promethean -m custom/qwen3.5-9b                     # any model the server has loaded
 ```
 
 **Full local stack** (the headline mode: 224 K context on an 8 GB GPU):
@@ -92,22 +91,27 @@ promethean --web                           # browser terminal
 
 ### Bring your own model
 
-The inference layer is a plain OpenAI-compatible HTTP endpoint, so the TurboQuant stack is one option among many:
+Promethean targets a single backend: **llama.cpp (llama-server) over the OpenAI-compatible protocol**, exposed as the `custom` provider. Supporting one transport instead of a dozen hosted APIs is a deliberate choice — it keeps the harness small, keys out of the loop, and every request on your own machine. Because the protocol is the OpenAI standard, the same `custom` path also drives any other OpenAI-compatible server you run (Ollama's `/v1`, LM Studio, vLLM, etc.).
 
-| Backend | Providers |
-|---|---|
-| **Local, no build** | Ollama, LM Studio, any OpenAI-compatible server you already run |
-| **Cloud** | Anthropic, OpenAI, Gemini, DeepSeek, Kimi (Moonshot), Qwen (DashScope), Zhipu, MiniMax |
-| **Custom** | Any OpenAI-compatible URL via the `custom` provider |
+```bash
+# Point at your server (defaults to the local llama-server loopback):
+/config custom_base_url=http://127.0.0.1:8080/v1
+/model custom/qwen3.5-9b
+```
 
-Switch any time with `/model <name>` in the REPL or `-m` on the CLI. The provider is auto-detected from the model name (`gpt-4o`, `gemini-2.0-flash`) or set with an explicit prefix (`ollama/qwen2.5-coder`, `kimi:moonshot-v1-32k`). Named profiles (`/model qwen`) bundle model, provider, and base URL into one alias. Run it yourself when you want to; rent when you don't.
+Switch models any time with `/model custom/<name>` in the REPL or `-m` on the CLI; `/model recommend` sizes a local GGUF to your hardware. Named profiles (`/model qwen`) bundle model and base URL into one alias. If you want a hosted model, run it behind an OpenAI-compatible proxy and point `custom_base_url` at that.
 
 **Tool calling with local models.** An agent needs the model to emit tool calls, and small local models are inconsistent about the wire format. Two things make this robust:
 
 - For `llama-server`, the model's chat template must be applied so it can emit native `tool_calls` — pass `--jinja`. Promethean's auto-started server includes it by default (`_DEFAULT_ARGS` in `server_autostart.py`); if you launch `llama-server` yourself, add `--jinja` (and set your own args via `/config llama_server_args=…`).
 - Many models still write the call as JSON or XML in the message *text* instead of the native field. Promethean recovers those automatically (`providers._recover_text_tool_calls`) and dispatches them, so the agent doesn't silently no-op. If a model emits a call for a tool that doesn't exist, you get a visible warning instead of nothing. Toggle with `/config recover_text_tool_calls=false`.
 
-New here? [`docs/MODELS.md`](docs/MODELS.md) is the practical guide to picking, downloading, and wiring up a model (local GGUF, Ollama/LM Studio, or cloud).
+**Edits that survive a weak model.** Small models miss an exact `Edit` target more often than frontier models do, and a strict match sends them into a retry loop. Two guards keep the loop short:
+
+- When `old_string` has no verbatim match, Edit tries to recover a *unique* target: it strips `Read` line-number gutters, ignores indentation, then falls back to a high-similarity block match. It only ever applies a single unambiguous span and annotates the diff so the change stays reviewable; ambiguous matches are rejected with a hint to add context. Toggle with `/config fuzzy_edit=false`.
+- After a successful `Edit`/`Write` on a source file, the file's checker runs (pyright/mypy/flake8/py_compile for Python, shellcheck/bash for shell) and any problems are appended to the tool result, so the model can fix its own break on the same turn instead of moving on. Silent when the file is clean or no checker is installed. Toggle with `/config verify_after_edit=false`.
+
+New here? [`docs/MODELS.md`](docs/MODELS.md) is the practical guide to picking, downloading, and wiring up a model (local GGUF via llama-server, or any OpenAI-compatible server). Project context is read from `AGENTS.md` and `CLAUDE.md` (project and `~/.claude/`); `/init` writes a starter one pre-filled from a scan of the repo.
 
 ---
 
@@ -152,7 +156,7 @@ New here? [`docs/MODELS.md`](docs/MODELS.md) is the practical guide to picking, 
 
 ## Target hardware
 
-This table is what the fully local stack (TurboQuant + Qwen3.5-9B) is tuned for. None of it is required otherwise: with a cloud key or an existing Ollama / LM Studio server, any machine that runs Python is enough.
+This table is what the fully local stack (TurboQuant + Qwen3.5-9B) is tuned for. None of it is required otherwise: with an existing OpenAI-compatible server (llama-server, Ollama, LM Studio, vLLM), any machine that runs Python is enough.
 
 | Component | Spec |
 |---|---|
@@ -240,6 +244,7 @@ Multi-layer defenses:
 - Bash output streams line-by-line; new-file writes return a unified-diff preview
 - Context-survival memory near compaction, named model profiles, reversible `/undo`
 - **ESC** aborts an in-flight turn cleanly and keeps the session (TTY only); Ctrl+C still works too
+- **Tab** completes slash commands and file paths in the input line; Shift+Tab cycles the permission mode
 
 ### Truncation alternation fix
 The load-bearing harness fix. When `max_tokens` truncates mid-tool-call, the old path popped the empty assistant turn, breaking OpenAI-compat user/assistant alternation and causing Qwen 9B to spam tool calls / other models to repeat prior text. Now replaced with a `[output cut off at max_tokens]` stub that preserves alternation.

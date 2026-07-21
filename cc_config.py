@@ -128,6 +128,22 @@ DEFAULTS = {
     # Helps weaker models notice they need to update callers too. Skip if
     # working on a small project or you don't want the noise.
     "symbol_context": True,
+    # ── Edit recovery ──────────────────────────────────────────────────────
+    # When an Edit's old_string has no verbatim match, try to recover a
+    # unique target: strip Read line-number gutters, ignore indentation, then
+    # fall back to a high-similarity block match. Only ever applies a single
+    # unambiguous span and annotates the diff. Set False to require exact
+    # matches (stricter, but weak models loop on near-misses).
+    "fuzzy_edit": True,
+    # ── Verify after edit ──────────────────────────────────────────────────
+    # After a successful Edit/Write on a source file, run its checker
+    # (pyright/mypy/flake8/py_compile for Python, shellcheck/bash -n for
+    # shell) and append any problems to the tool result so the model can
+    # self-correct on the same turn. Silent when the file is clean or no
+    # checker is installed. Set False to disable; tune the per-run budget
+    # with verify_after_edit_timeout (seconds).
+    "verify_after_edit": True,
+    "verify_after_edit_timeout": 15,
     # ── Memories near compaction (context survival) ────────────────────────
     # When True, just before the context window is compacted into a lossy
     # summary, an extra LLM pass rescues durable facts (decisions, project

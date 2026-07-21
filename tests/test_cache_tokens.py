@@ -110,33 +110,6 @@ def test_rewind_restores_cache_tokens_from_snapshot(tmp_path, monkeypatch):
 
 # ---------- 4: Provider extraction helpers ----------
 
-class TestAnthropicCacheExtraction:
-    """_anthropic_cache_tokens must read cache_read_input_tokens / cache_creation_input_tokens."""
-
-    def test_returns_both_when_populated(self):
-        from providers import _anthropic_cache_tokens
-        usage = SimpleNamespace(
-            input_tokens=120, output_tokens=40,
-            cache_read_input_tokens=77, cache_creation_input_tokens=33,
-        )
-        assert _anthropic_cache_tokens(usage) == (77, 33)
-
-    def test_missing_fields_default_to_zero(self):
-        """Older Anthropic SDKs and Bedrock-over-litellm wrappers omit the cache fields."""
-        from providers import _anthropic_cache_tokens
-        usage = SimpleNamespace(input_tokens=10, output_tokens=5)
-        assert _anthropic_cache_tokens(usage) == (0, 0)
-
-    def test_none_fields_coerced_to_zero(self):
-        """Anthropic occasionally returns None (JSON null) rather than omitting the field."""
-        from providers import _anthropic_cache_tokens
-        usage = SimpleNamespace(
-            input_tokens=10, output_tokens=5,
-            cache_read_input_tokens=None, cache_creation_input_tokens=None,
-        )
-        assert _anthropic_cache_tokens(usage) == (0, 0)
-
-
 class TestOpenAICacheExtraction:
     """_openai_cached_read_tokens must walk prompt_tokens_details.cached_tokens."""
 
@@ -162,12 +135,9 @@ class TestOpenAICacheExtraction:
         assert _openai_cached_read_tokens(usage) == 0
 
 
-def test_ollama_stream_never_reports_cache_tokens():
-    """Ollama has no prompt-caching; the path must yield 0/0 without raising."""
+def test_turn_without_cache_reports_zero():
+    """A backend that doesn't report prompt caching yields 0/0 without raising."""
     from providers import AssistantTurn
-    # stream_ollama yields AssistantTurn(text, tool_calls, 0, 0, 0, 0) -- we can't
-    # reach the full HTTP call in a unit test, but we can assert the shape of the
-    # yielded object the callers rely on.
     turn = AssistantTurn("hi", [], 0, 0, 0, 0)
     assert turn.cache_read_tokens == 0
     assert turn.cache_write_tokens == 0

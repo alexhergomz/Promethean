@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import difflib
 import os
+import re
 from pathlib import Path
 
 
@@ -95,9 +96,108 @@ def _write(file_path: str, content: str) -> str:
 
 
 # ── Edit ──────────────────────────────────────────────────────────────────
+#
+# Local models are much worse than frontier models at reproducing an exact
+# byte-for-byte span. The three common failure modes are: (1) copying the
+# "  123\t" line-number prefix out of a Read result into old_string, (2)
+# getting the indentation slightly wrong, and (3) a small transcription
+# drift (a renamed variable, a dropped comment). A strict exact-match Edit
+# rejects all three and the model loops re-emitting near-identical mistakes.
+#
+# _locate_inexact recovers those cases when the verbatim search misses. It
+# only ever applies a *uniquely* located span; anything ambiguous is
+# reported back so the model adds context rather than editing blind. Every
+# recovered edit is annotated and the full diff is returned, so a reviewer
+# can see exactly what changed.
+
+_AMBIGUOUS = object()          # sentinel: matched, but in more than one place
+
+_LINE_NO_PREFIX = re.compile(r"(?m)^[ \t]*\d+\t")   # Read's "   123\t" gutter
+_FUZZY_MIN_RATIO = 0.90        # similarity floor for the drift-tolerant pass
+_FUZZY_MIN_MARGIN = 0.05       # winner must beat the runner-up by this much
+
+
+def _line_offsets(lines: list[str]) -> list[int]:
+    """Prefix character offsets of each line in "\n".join(lines).
+
+    offsets[i] is the start of line i; offsets[len(lines)] is one past the
+    end. Reconstructing with "\n" means each line contributes len+1 chars.
+    """
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line) + 1)
+    return offsets
+
+
+def _block_span(content_lines: list[str], start_line: int, n: int) -> tuple[int, int]:
+    """Character span of content_lines[start_line:start_line+n] within the
+    newline-joined text, excluding the trailing newline after the block."""
+    offsets = _line_offsets(content_lines)
+    start = offsets[start_line]
+    end   = offsets[start_line + n] - 1   # drop the separator after the block
+    return start, max(start, end)
+
+
+def _locate_inexact(content_norm: str, old_norm: str):
+    """Find old_norm in content_norm when a verbatim search failed.
+
+    Returns (start, end, strategy) for a unique match, _AMBIGUOUS if a
+    match exists but is not unique, or None if nothing plausible was found.
+    """
+    ambiguous = False
+
+    # 1. Strip Read-style line-number prefixes and retry verbatim.
+    destripped = _LINE_NO_PREFIX.sub("", old_norm)
+    if destripped and destripped != old_norm:
+        c = content_norm.count(destripped)
+        if c == 1:
+            i = content_norm.index(destripped)
+            return i, i + len(destripped), "line-number-stripped match"
+        if c > 1:
+            ambiguous = True
+
+    old_lines = old_norm.split("\n")
+    if old_lines and old_lines[-1] == "":
+        old_lines = old_lines[:-1]      # a trailing newline is not its own line
+    if not old_lines:
+        return _AMBIGUOUS if ambiguous else None
+
+    content_lines = content_norm.split("\n")
+    n = len(old_lines)
+
+    # 2. Indentation-insensitive block match (compare lines stripped).
+    target = [ln.strip() for ln in old_lines]
+    hits = [
+        i for i in range(len(content_lines) - n + 1)
+        if [content_lines[j].strip() for j in range(i, i + n)] == target
+    ]
+    if len(hits) == 1:
+        start, end = _block_span(content_lines, hits[0], n)
+        return start, end, "indentation-insensitive match"
+    if len(hits) > 1:
+        ambiguous = True
+
+    # 3. Drift-tolerant match: the most-similar same-height window, but only
+    #    if it clears a high similarity floor and clearly beats the next
+    #    candidate. Guards against silently editing the wrong span.
+    old_block = "\n".join(old_lines)
+    scored = []
+    for i in range(len(content_lines) - n + 1):
+        window = "\n".join(content_lines[i:i + n])
+        scored.append((difflib.SequenceMatcher(None, old_block, window).ratio(), i))
+    if scored:
+        scored.sort(reverse=True)
+        best_ratio, best_i = scored[0]
+        runner = scored[1][0] if len(scored) > 1 else 0.0
+        if best_ratio >= _FUZZY_MIN_RATIO and best_ratio - runner >= _FUZZY_MIN_MARGIN:
+            start, end = _block_span(content_lines, best_i, n)
+            return start, end, f"closest match ({best_ratio * 100:.0f}% similar)"
+
+    return _AMBIGUOUS if ambiguous else None
+
 
 def _edit(file_path: str, old_string: str, new_string: str,
-          replace_all: bool = False) -> str:
+          replace_all: bool = False, fuzzy: bool = True) -> str:
     p = _resolve(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
@@ -112,15 +212,27 @@ def _edit(file_path: str, old_string: str, new_string: str,
         old_norm     = old_string.replace("\r\n", "\n")
         new_norm     = new_string.replace("\r\n", "\n")
 
+        note  = ""
         count = content_norm.count(old_norm)
         if count == 0:
-            return ("Error: old_string not found in file. Please ensure EXACT match, "
-                    "including all exact leading spaces/indentation and trailing newlines.")
-        if count > 1 and not replace_all:
+            located = _locate_inexact(content_norm, old_norm) if fuzzy else None
+            if located is None:
+                return ("Error: old_string not found in file. Match it exactly, "
+                        "including indentation and surrounding lines, and drop any "
+                        "line-number prefixes from Read output. Re-read the file if "
+                        "it may have changed.")
+            if located is _AMBIGUOUS:
+                return ("Error: old_string has no exact match, and an approximate "
+                        "match appears in more than one place. Add surrounding lines "
+                        "to make it unique.")
+            start, end, strategy = located
+            new_content_norm = content_norm[:start] + new_norm + content_norm[end:]
+            note = (f"\n\n(no verbatim match — applied via {strategy}. "
+                    "Confirm the diff above is the change you intended.)")
+        elif count > 1 and not replace_all:
             return (f"Error: old_string appears {count} times. "
                     "Provide more context to make it unique, or use replace_all=true.")
-
-        if replace_all:
+        elif replace_all:
             new_content_norm = content_norm.replace(old_norm, new_norm)
         else:
             new_content_norm = content_norm.replace(old_norm, new_norm, 1)
@@ -134,7 +246,7 @@ def _edit(file_path: str, old_string: str, new_string: str,
 
         p.write_text(final_content, encoding="utf-8", newline="")
         diff = generate_unified_diff(old_content_final, final_content, p.name)
-        return f"Changes applied to {p.name}:\n\n{diff}"
+        return f"Changes applied to {p.name}:\n\n{diff}{note}"
     except Exception as e:
         return f"Error: {e}"
 

@@ -38,7 +38,8 @@ def _run_quietly(cmd: list[str], cwd: str | None = None,
         return -1, f"(error: {e})"
 
 
-def _get_diagnostics(file_path: str, language: str = None) -> str:
+def _get_diagnostics(file_path: str, language: str = None,
+                     timeout: int = 30) -> str:
     p = Path(file_path)
     if not p.exists():
         return f"Error: file not found: {file_path}"
@@ -48,7 +49,7 @@ def _get_diagnostics(file_path: str, language: str = None) -> str:
     results: list[str] = []
 
     if lang == "python":
-        rc, out = _run_quietly(["pyright", "--outputjson", abs_path])
+        rc, out = _run_quietly(["pyright", "--outputjson", abs_path], timeout=timeout)
         if rc != -1:
             try:
                 data  = json.loads(out)
@@ -72,37 +73,37 @@ def _get_diagnostics(file_path: str, language: str = None) -> str:
                 if out:
                     results.append(f"pyright:\n{out[:3000]}")
         else:
-            rc2, out2 = _run_quietly(["mypy", "--no-error-summary", abs_path])
+            rc2, out2 = _run_quietly(["mypy", "--no-error-summary", abs_path], timeout=timeout)
             if rc2 != -1:
                 results.append(f"mypy:\n{out2[:3000]}" if out2 else "mypy: no diagnostics")
             else:
-                rc3, out3 = _run_quietly(["flake8", abs_path])
+                rc3, out3 = _run_quietly(["flake8", abs_path], timeout=timeout)
                 if rc3 != -1:
                     results.append(f"flake8:\n{out3[:3000]}" if out3 else "flake8: no diagnostics")
                 else:
-                    rc4, out4 = _run_quietly(["python3", "-m", "py_compile", abs_path])
+                    rc4, out4 = _run_quietly(["python3", "-m", "py_compile", abs_path], timeout=timeout)
                     if out4:
                         results.append(f"py_compile (syntax check):\n{out4}")
                     else:
                         results.append("py_compile: syntax OK (no further tools available)")
 
     elif lang in ("javascript", "typescript"):
-        rc, out = _run_quietly(["tsc", "--noEmit", "--strict", abs_path])
+        rc, out = _run_quietly(["tsc", "--noEmit", "--strict", abs_path], timeout=timeout)
         if rc != -1:
             results.append(f"tsc:\n{out[:3000]}" if out else "tsc: no errors")
         else:
-            rc2, out2 = _run_quietly(["eslint", abs_path])
+            rc2, out2 = _run_quietly(["eslint", abs_path], timeout=timeout)
             if rc2 != -1:
                 results.append(f"eslint:\n{out2[:3000]}" if out2 else "eslint: no issues")
             else:
                 results.append("No TypeScript/JavaScript checker found (install tsc or eslint)")
 
     elif lang == "shellscript":
-        rc, out = _run_quietly(["shellcheck", abs_path])
+        rc, out = _run_quietly(["shellcheck", abs_path], timeout=timeout)
         if rc != -1:
             results.append(f"shellcheck:\n{out[:3000]}" if out else "shellcheck: no issues")
         else:
-            rc2, out2 = _run_quietly(["bash", "-n", abs_path])
+            rc2, out2 = _run_quietly(["bash", "-n", abs_path], timeout=timeout)
             results.append(f"bash -n (syntax check):\n{out2}" if out2 else "bash -n: syntax OK")
 
     else:
@@ -112,3 +113,32 @@ def _get_diagnostics(file_path: str, language: str = None) -> str:
         )
 
     return "\n\n".join(results) if results else "(no diagnostics output)"
+
+
+# Substrings that mark a checker's output as "nothing to report". Used by
+# summarize_for_edit to stay silent when a just-edited file is clean.
+_CLEAN_MARKERS = (
+    "no diagnostics", "no errors", "no issues",
+    "syntax ok", "no further tools available",
+)
+
+
+def summarize_for_edit(file_path: str, timeout: int = 15) -> str | None:
+    """Run diagnostics on a just-edited file for the auto-verify footer.
+
+    Returns a compact issues string, or None when the file is clean, the
+    language is unsupported, or no checker is installed. Kept quiet on the
+    happy path so a successful edit isn't buried under "no diagnostics"
+    noise on every turn.
+    """
+    if _detect_language(file_path) == "unknown":
+        return None
+    out = _get_diagnostics(file_path, timeout=timeout)
+    if not out or out.startswith(("Error:", "No diagnostic tool", "No TypeScript")):
+        return None
+    low = out.lower()
+    if any(marker in low for marker in _CLEAN_MARKERS):
+        return None
+    if "command not found" in low or "timed out" in low:
+        return None
+    return out.strip()

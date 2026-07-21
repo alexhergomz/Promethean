@@ -86,11 +86,14 @@ def draw_frame(lines_segments):
 # ── Pre-defined screen content blocks ───────────────────────────────────
 
 BANNER = [
-    [seg("╭─ Promethean ──────────────────────────────────────────╮", SUBTEXT)],
-    [seg("│  ", SUBTEXT), seg("Model: ", SUBTEXT), seg("claude-opus-4-6", CYAN, True)],
-    [seg("│  ", SUBTEXT), seg("Permissions: ", SUBTEXT), seg("auto", YELLOW)],
-    [seg("│  Type /help for commands, Ctrl+C to cancel                  │", SUBTEXT)],
-    [seg("╰────────────────────────────────────────────────────────────╯", SUBTEXT)],
+    [seg("╭─ Promethean ────────────────────────────────────────────────╮", SUBTEXT)],
+    [seg("│  ", SUBTEXT), seg("Model: ", SUBTEXT), seg("custom/qwen3.5-9b", PEACH, True),
+     seg("    Backend: ", SUBTEXT), seg("llama.cpp", CYAN)],
+    [seg("│  ", SUBTEXT), seg("Context: ", SUBTEXT), seg("57K", CYAN),
+     seg("    Permissions: ", SUBTEXT), seg("auto", YELLOW),
+     seg("    local — no keys", SUBTEXT)],
+    [seg("│  Type /help for commands · ESC to interrupt · Ctrl+C to quit  │", SUBTEXT)],
+    [seg("╰──────────────────────────────────────────────────────────────╯", SUBTEXT)],
     None,
 ]
 
@@ -102,15 +105,23 @@ def prompt_line(text="", cursor=False):
         seg(text + cur, TEXT),
     ]
 
-def claude_header():
+def asst_header():
     return [
-        seg("╭─ Claude ", SUBTEXT),
+        seg("╭─ qwen3.5-9b ", SUBTEXT),
         seg("●", GREEN),
-        seg(" ─────────────────────────────────────────────", SUBTEXT),
+        seg(" ────────────────────────────────────────────", SUBTEXT),
     ]
 
-def claude_sep():
+def asst_sep():
     return [seg("╰──────────────────────────────────────────────────────────", SUBTEXT)]
+
+def footer(pct=8, tps=34):
+    return [
+        seg(" custom/qwen3.5-9b", PEACH),
+        seg(" · ", SUBTEXT), seg("ctx ", SUBTEXT), seg(f"{pct}%", GREEN),
+        seg(" · ", SUBTEXT), seg("auto", YELLOW),
+        seg(" · ", SUBTEXT), seg(f"{tps} t/s", GREEN),
+    ]
 
 def tool_line(icon, name, arg, color=CYAN):
     return [
@@ -122,10 +133,16 @@ def tool_line(icon, name, arg, color=CYAN):
     ]
 
 def tool_ok(msg):
-    return [seg(f"  ✓ ", GREEN), seg(msg, SUBTEXT)]
+    return [seg("  ✓ ", GREEN), seg(msg, SUBTEXT)]
 
 def tool_err(msg):
-    return [seg(f"  ✗ ", RED), seg(msg, SUBTEXT)]
+    return [seg("  ✗ ", RED), seg(msg, SUBTEXT)]
+
+def diff_del(t):
+    return [seg("    - ", RED), seg(t, RED)]
+
+def diff_add(t):
+    return [seg("    + ", GREEN), seg(t, GREEN)]
 
 def text_line(t, indent=2):
     return [seg(" " * indent + t, TEXT)]
@@ -135,156 +152,104 @@ def dim_line(t, indent=4):
 
 
 # ── Scene builder ─────────────────────────────────────────────────────────
+#
+# The demo runs entirely against the local llama.cpp backend and showcases the
+# two things that make a weak local model usable: Edit recovers from a
+# non-verbatim match, and the edited file is auto-verified so the model fixes
+# its own mistake on the same turn. It closes on /model recommend.
 
 def build_scenes():
     """Return list of (frame_content, duration_ms)."""
     scenes = []
     def add(lines, ms=120):
-        scenes.append((lines, ms))
+        scenes.append((lines, ms + 0))   # ms passed through; kept explicit
 
-    # ── Scene 0: Empty terminal with banner ──────────────────────────────
-    add(BANNER + [prompt_line(cursor=True)], 800)
+    # ── Scene 0: banner ──────────────────────────────────────────────────
+    add(BANNER + [prompt_line(cursor=True), None, footer(6, 0)], 800)
 
-    # ── Scene 1: User types query 1 ──────────────────────────────────────
-    msg1 = "List Python files in this project and show me their line counts"
+    # ── Scene 1: user types the request ──────────────────────────────────
+    msg1 = "Fix the off-by-one in paginate() in utils.py"
     for i in range(0, len(msg1) + 1, 3):
-        add(BANNER + [prompt_line(msg1[:i], cursor=(i < len(msg1)))], 60)
-    add(BANNER + [prompt_line(msg1, cursor=False)], 400)
+        add(BANNER + [prompt_line(msg1[:i], cursor=(i < len(msg1))), None, footer(6, 0)], 55)
+    add(BANNER + [prompt_line(msg1), None, footer(6, 0)], 350)
 
-    # ── Scene 2: Claude header appears ──────────────────────────────────
-    pre = BANNER + [prompt_line(msg1)]
-    add(pre + [None, claude_header(), [seg("│ ", SUBTEXT)]], 300)
+    pre  = BANNER + [prompt_line(msg1)]
+    base = pre + [None, asst_header()]
 
-    # ── Scene 3: Tool call - Glob ────────────────────────────────────────
-    base = pre + [None, claude_header()]
-    add(base + [
-        tool_line("⚙", "Glob", "**/*.py"),
-    ], 500)
-    add(base + [
-        tool_line("⚙", "Glob", "**/*.py"),
-        tool_ok("5 files matched"),
-    ], 600)
-
-    # ── Scene 4: Tool call - Bash (wc -l) ────────────────────────────────
-    add(base + [
-        tool_line("⚙", "Glob", "**/*.py"),
-        tool_ok("5 files matched"),
-        None,
-        tool_line("⚙", "Bash", "wc -l *.py | sort -n"),
-    ], 500)
-    add(base + [
-        tool_line("⚙", "Glob", "**/*.py"),
-        tool_ok("5 files matched"),
-        None,
-        tool_line("⚙", "Bash", "wc -l *.py | sort -n"),
-        tool_ok("→ 6 lines (120 chars)"),
-    ], 700)
-
-    # ── Scene 5: Claude streams response ────────────────────────────────
-    response_lines = [
-        "Here are the Python files in this project with their line counts:",
-        "",
-        "  76  config.py      — Configuration management and cost calculation",
-        " 100  context.py     — System prompt builder, CLAUDE.md + git injection",
-        " 173  agent.py       — Core agent loop with streaming API calls",
-        " 359  tools.py       — 8 built-in tools (Read/Write/Edit/Bash/Glob/Grep/Web)",
-        " 553  promethean.py — REPL entry point, slash commands, rich rendering",
-        "────────────────────────────────────────────────────",
-        "1261  total",
-        "",
-        "The largest file is `promethean.py` containing the interactive REPL,",
-        "14 slash commands, permission handling, and markdown rendering.",
+    # ── Scene 2: Edit call, recovered from a non-verbatim match ──────────
+    edit1 = [
+        tool_line("✎", "Edit", "utils.py", MAUVE),
     ]
-    tool_section = [
-        tool_line("⚙", "Glob", "**/*.py"),
-        tool_ok("5 files matched"),
-        None,
-        tool_line("⚙", "Bash", "wc -l *.py | sort -n"),
-        tool_ok("→ 6 lines (120 chars)"),
-        None,
-        [seg("│ ", SUBTEXT)],
+    add(base + edit1, 500)
+    edit1_done = [
+        tool_line("✎", "Edit", "utils.py", MAUVE),
+        diff_del("return items[start : start + size + 1]"),
+        diff_add("return items[start : start + size]"),
+        dim_line("(no verbatim match — applied via indentation-insensitive match)", 2),
     ]
+    add(base + edit1_done, 700)
+
+    # ── Scene 3: auto verify-after-edit catches a second bug ─────────────
+    verify_bad = edit1_done + [
+        None,
+        [seg("  [verify] ", PEACH), seg("pyright — 1 issue:", SUBTEXT)],
+        [seg("    12:16 ", SUBTEXT), seg("[error] ", RED), seg("\"size\" is possibly unbound", TEXT)],
+    ]
+    add(base + verify_bad, 900)
+
+    # ── Scene 4: model fixes the unbound default, verify clean ───────────
+    fix = verify_bad + [
+        None,
+        tool_line("✎", "Edit", "utils.py", MAUVE),
+        diff_add("size = size or 20"),
+        [seg("  [verify] ", PEACH), seg("pyright: no issues", GREEN)],
+    ]
+    add(base + fix, 500)
+    add(base + fix, 700)
+
+    # ── Scene 5: assistant wraps up ──────────────────────────────────────
+    resp = [
+        "Fixed two things in paginate():",
+        "",
+        "  • the slice was one past the page (off-by-one)",
+        "  • size had no default, so an unset size raised — added size = size or 20",
+        "",
+        "The verifier confirms utils.py is clean.",
+    ]
+    section = fix + [None, [seg("│ ", SUBTEXT)]]
     streamed = []
-    for i, rline in enumerate(response_lines):
+    for rline in resp:
         streamed.append(text_line(rline, 2))
-        content = base + tool_section + streamed
-        add(content, 80 if rline else 30)
+        add(base + section + streamed + [None, footer(11, 41)], 80 if rline else 30)
+    full1 = base + section + [text_line(l, 2) for l in resp] + [asst_sep(), None]
+    add(full1 + [prompt_line(cursor=True), None, footer(11, 41)], 900)
 
-    add(base + tool_section + [text_line(l, 2) for l in response_lines] + [claude_sep()], 1200)
+    # ── Scene 6: /model recommend ────────────────────────────────────────
+    slash = "/model recommend"
+    for i in range(0, len(slash) + 1, 2):
+        add(full1 + [prompt_line(slash[:i], cursor=(i < len(slash))), None, footer(11, 41)], 55)
+    add(full1 + [prompt_line(slash), None, footer(11, 41)], 350)
 
-    # ── Scene 6: New prompt appears ──────────────────────────────────────
-    full1 = (pre + [None, claude_header()] +
-             tool_section +
-             [text_line(l, 2) for l in response_lines] +
-             [claude_sep(), None])
-    add(full1 + [prompt_line(cursor=True)], 800)
-
-    # ── Scene 7: User types query 2 ──────────────────────────────────────
-    msg2 = "Write a hello_world.py that prints 'Hello from Promethean!'"
-    for i in range(0, len(msg2) + 1, 4):
-        add(full1 + [prompt_line(msg2[:i], cursor=(i < len(msg2)))], 55)
-    add(full1 + [prompt_line(msg2)], 400)
-
-    # ── Scene 8: Write tool call ─────────────────────────────────────────
-    base2 = full1 + [prompt_line(msg2), None, claude_header()]
-    add(base2 + [
-        tool_line("⚙", "Write", "/tmp/hello_world.py", MAUVE),
-    ], 600)
-    add(base2 + [
-        tool_line("⚙", "Write", "/tmp/hello_world.py", MAUVE),
-        tool_ok("Wrote 3 lines to /tmp/hello_world.py"),
+    rec = [
+        [seg("Hardware:  ", SUBTEXT), seg("16 GB RAM", TEXT), seg(" · ", SUBTEXT), seg("8.6 GB VRAM", TEXT)],
+        [seg("Budget:    ", SUBTEXT), seg("8.6 GB", CYAN), seg("  (GPU-resident)", SUBTEXT)],
         None,
-        tool_line("⚙", "Bash", "python3 /tmp/hello_world.py"),
-    ], 500)
-    add(base2 + [
-        tool_line("⚙", "Write", "/tmp/hello_world.py", MAUVE),
-        tool_ok("Wrote 3 lines to /tmp/hello_world.py"),
+        [seg("Recommended for ~9 GB", TEXT, True),
+         seg("  (quant sized to fit the full context)", SUBTEXT)],
         None,
-        tool_line("⚙", "Bash", "python3 /tmp/hello_world.py"),
-        tool_ok("→ Hello from Promethean!"),
-    ], 800)
-
-    # ── Scene 9: Final response ──────────────────────────────────────────
-    resp2 = [
-        "Done! Created `/tmp/hello_world.py` and ran it successfully.",
-        "",
-        "  print('Hello from Promethean!')",
-        "",
-        "Output: Hello from Promethean!",
+        [seg("  qwen3.5-9b", CYAN), seg(" ★  ", YELLOW), seg("Qwen3.5", SUBTEXT),
+         seg("  max 57K   ", SUBTEXT), seg("[flagship]", SUBTEXT)],
+        [seg("      → ", SUBTEXT), seg("UD-Q4_K_XL (5.97 GB) · fits ~79K ctx", GREEN)],
+        [seg("        huggingface.co/unsloth/Qwen3.5-9B-GGUF", SUBTEXT)],
+        [seg("  qwen3.5-4b", CYAN), seg("     Qwen3.5", SUBTEXT), seg("  max 57K", SUBTEXT)],
+        [seg("      → ", SUBTEXT), seg("UD-Q8_K_XL (5.95 GB) · fits ~160K ctx", GREEN)],
     ]
-    tool2 = [
-        tool_line("⚙", "Write", "/tmp/hello_world.py", MAUVE),
-        tool_ok("Wrote 3 lines to /tmp/hello_world.py"),
-        None,
-        tool_line("⚙", "Bash", "python3 /tmp/hello_world.py"),
-        tool_ok("→ Hello from Promethean!"),
-        None,
-        [seg("│ ", SUBTEXT)],
-    ]
-    streamed2 = []
-    for rline in resp2:
-        streamed2.append(text_line(rline, 2))
-        add(base2 + tool2 + streamed2, 90)
-
-    add(base2 + tool2 + [text_line(l, 2) for l in resp2] + [claude_sep()], 1500)
-
-    # ── Scene 10: Slash command demo ─────────────────────────────────────
-    final_state = (full1 + [prompt_line(msg2), None, claude_header()] +
-                   tool2 + [text_line(l, 2) for l in resp2] + [claude_sep(), None])
-    add(final_state + [prompt_line(cursor=True)], 600)
-
-    slash = "/cost"
-    for i in range(len(slash) + 1):
-        add(final_state + [prompt_line(slash[:i], cursor=(i < len(slash)))], 80)
-    add(final_state + [prompt_line(slash)], 400)
-
-    # cost output
-    cost_lines = [
-        [seg("Input tokens:  ", CYAN), seg("1,842", TEXT, True)],
-        [seg("Output tokens: ", CYAN), seg("312", TEXT, True)],
-        [seg("Est. cost:     ", CYAN), seg("$0.0318 USD", GREEN, True)],
-    ]
-    add(final_state + [prompt_line(slash), None] + cost_lines + [None, prompt_line(cursor=True)], 2000)
+    grow = full1 + [prompt_line(slash), None]
+    acc = []
+    for rline in rec:
+        acc.append(rline if rline is not None else None)
+        add(grow + acc + [None, footer(11, 41)], 110)
+    add(grow + rec + [None, prompt_line(cursor=True), None, footer(11, 41)], 2200)
 
     return scenes
 
@@ -359,37 +324,29 @@ def render_screenshot(output_path="screenshot.png"):
     """Single high-quality screenshot showing a complete session."""
     lines = (
         BANNER +
-        [prompt_line("List Python files and their line counts")] +
-        [None, claude_header()] +
+        [prompt_line("Fix the off-by-one in paginate() in utils.py")] +
+        [None, asst_header()] +
         [
-            tool_line("⚙", "Glob", "**/*.py"),
-            tool_ok("5 files matched"),
+            tool_line("✎", "Edit", "utils.py", MAUVE),
+            diff_del("return items[start : start + size + 1]"),
+            diff_add("return items[start : start + size]"),
+            dim_line("(no verbatim match — applied via indentation-insensitive match)", 2),
             None,
-            tool_line("⚙", "Bash", "wc -l *.py | sort -n"),
-            tool_ok("→ 6 lines (120 chars)"),
+            [seg("  [verify] ", PEACH), seg("pyright — 1 issue:", SUBTEXT)],
+            [seg("    12:16 ", SUBTEXT), seg("[error] ", RED), seg("\"size\" is possibly unbound", TEXT)],
+            None,
+            tool_line("✎", "Edit", "utils.py", MAUVE),
+            diff_add("size = size or 20"),
+            [seg("  [verify] ", PEACH), seg("pyright: no issues", GREEN)],
             None,
             [seg("│ ", SUBTEXT)],
-            text_line("Here are the Python files with their line counts:", 2),
-            None,
-            text_line("  76  config.py      — Configuration management", 2),
-            text_line(" 100  context.py     — System prompt + git injection", 2),
-            text_line(" 173  agent.py       — Core agent loop", 2),
-            text_line(" 359  tools.py       — 8 built-in tools", 2),
-            text_line(" 553  promethean.py — REPL + slash commands", 2),
-            text_line("────────────────────────────────", 2),
-            text_line("1261  total", 2),
-            None,
-            text_line("The main entry point `promethean.py` contains the REPL,", 2),
-            text_line("14 slash commands, permission handling, and rich rendering.", 2),
-            claude_sep(),
-            None,
-            prompt_line("/cost"),
-            None,
-            [seg("Input tokens:  ", CYAN), seg("1,842", TEXT, True)],
-            [seg("Output tokens: ", CYAN), seg("312", TEXT, True)],
-            [seg("Est. cost:     ", CYAN), seg("$0.0318 USD", GREEN, True)],
+            text_line("Fixed the off-by-one and the unbound `size`. The verifier", 2),
+            text_line("confirms utils.py is clean.", 2),
+            asst_sep(),
             None,
             prompt_line(cursor=True),
+            None,
+            footer(11, 41),
         ]
     )
     img = draw_frame(lines)

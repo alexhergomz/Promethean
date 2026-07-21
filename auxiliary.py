@@ -8,70 +8,26 @@ Config key: "auxiliary_model" (default: auto-detect)
 """
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 import providers
-
-# ── Fast model candidates (checked in order) ─────────────────────────────
-# Each entry: (model_name, required_env_var_or_None)
-_CANDIDATES = [
-    ("gemini/gemini-2.0-flash",      "GEMINI_API_KEY"),
-    ("gpt-4o-mini",                   "OPENAI_API_KEY"),
-    ("deepseek/deepseek-chat",        "DEEPSEEK_API_KEY"),
-    ("claude-haiku-4-5-20251001",     "ANTHROPIC_API_KEY"),
-    ("qwen/qwen-turbo",              "DASHSCOPE_API_KEY"),
-    ("zhipu/glm-4-flash",            "ZHIPU_API_KEY"),
-]
 
 _resolved: Optional[str] = None
 
 
 def get_auxiliary_model(config: dict) -> str:
-    """Return the best available auxiliary model.
+    """Return the model to use for cheap side tasks.
 
-    Priority:
-    1. config["auxiliary_model"] if explicitly set
-    2. Auto-detect from available API keys (cheapest/fastest first)
-    3. Fall back to the user's primary model
+    A dedicated ``auxiliary_model`` in config wins; otherwise the primary
+    model handles these too. (Earlier builds routed side tasks to a cheap
+    cloud model when a key was present — with the harness now llama.cpp-only,
+    there's a single local model to use.)
     """
-    global _resolved
-
-    # Explicit config
-    explicit = config.get("auxiliary_model")
-    if explicit:
-        return explicit
-
-    # Cached auto-detection
-    if _resolved is not None:
-        return _resolved
-
-    # Check which providers have keys available
-    for model, env_var in _CANDIDATES:
-        if env_var is None:
-            _resolved = model
-            return model
-        # Check env var or config key
-        pname = providers.detect_provider(model)
-        key = providers.get_api_key(pname, config)
-        if key:
-            _resolved = model
-            return model
-
-    # Check if current model is local (Ollama) — use it directly
-    primary = config.get("model", "")
-    pname = providers.detect_provider(primary)
-    if pname in ("ollama", "lmstudio", "custom"):
-        _resolved = primary
-        return primary
-
-    # Final fallback: use the primary model
-    _resolved = primary
-    return primary
+    return config.get("auxiliary_model") or config.get("model", "")
 
 
 def reset_cache():
-    """Clear the cached auxiliary model (for testing or config changes)."""
+    """Clear the cached auxiliary model (kept for API/test compatibility)."""
     global _resolved
     _resolved = None
 

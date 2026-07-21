@@ -1,6 +1,5 @@
 # Core dependencies (must match pyproject.toml [project.dependencies])
-anthropic>=0.40.0
-openai>=1.30.0
+openai>=1.30.0            # transport for llama.cpp / any OpenAI-compatible server
 httpx>=0.27.0
 rich>=13.0.0
 pyte>=0.8.0            # terminal emulator for !claude / !python bridge rendering

@@ -100,31 +100,20 @@ class TestEstimateTokens:
 # ── get_context_limit ─────────────────────────────────────────────────────
 
 class TestGetContextLimit:
-    def test_anthropic(self):
-        assert get_context_limit("claude-opus-4-6") == 200000
+    def test_custom_backend_default(self):
+        # The llama.cpp/custom backend defaults to 128000 without an override.
+        assert get_context_limit("custom/qwen3.5-9b") == 128000
 
-    def test_gemini(self):
-        assert get_context_limit("gemini-2.0-flash") == 1000000
-
-    def test_deepseek(self):
-        # Raised to 128K on the v4 update — DeepSeek's real context window
-        # has been 128K since v3, and v4 keeps that.
-        assert get_context_limit("deepseek-chat") == 128000
-        assert get_context_limit("deepseek-v4-pro") == 128000
-        assert get_context_limit("deepseek-v4-flash") == 128000
-
-    def test_openai(self):
-        assert get_context_limit("gpt-4o") == 128000
-
-    def test_qwen(self):
-        assert get_context_limit("qwen-max") == 1000000
+    def test_config_override_wins(self):
+        # A llama-server run with -np > 1 gives each slot n_ctx/n_parallel;
+        # the explicit override must take precedence over the provider default.
+        assert get_context_limit("custom/qwen3.5-9b", {"context_limit": 57344}) == 57344
 
     def test_unknown_model_fallback(self):
-        # Unknown models fall back to openai provider which has 128000
         assert get_context_limit("some-random-model-xyz") == 128000
 
-    def test_explicit_provider_prefix(self):
-        assert get_context_limit("ollama/llama3.3") == 128000
+    def test_bare_name_resolves_to_custom(self):
+        assert get_context_limit("qwen3.5-9b") == 128000
 
 
 # ── snip_old_tool_results ─────────────────────────────────────────────────

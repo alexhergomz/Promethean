@@ -17,9 +17,9 @@ from typing import Optional
 from urllib.parse import urlparse
 
 
-# Default profiles shipped with the harness. The seed assumes Alex's
-# stated stack: local Qwen3.5-9B via llama-server on :8080 plus MiniMax
-# M2 over the global endpoint.
+# Default profiles shipped with the harness. The harness is llama.cpp-only,
+# so the seed is a single local profile: Qwen3.5-9B via llama-server on :8080.
+# Add your own in ~/.promethean/config.json under `model_profiles`.
 DEFAULT_PROFILES: dict[str, dict] = {
     "qwen": {
         "model":           "custom/qwen3.5-9b",
@@ -31,36 +31,6 @@ DEFAULT_PROFILES: dict[str, dict] = {
             "context_limit":   57344,        # 229376 / 4 slots
             "max_tokens":      8192,
             "thinking":        None,
-        },
-    },
-    "m2": {
-        "model":           "MiniMax-M2",
-        "provider":        "minimax",
-        "base_url":        "https://api.minimax.io/v1",
-        "api_key_env":     "MINIMAX_API_KEY",
-        "description":     "MiniMax-M2 (cloud, 204K ctx, agentic flagship)",
-        "config_overrides": {
-            "max_tokens":      40000,        # enough room for M2's thinking
-            "thinking":        None,
-        },
-    },
-    "m2-fast": {
-        "model":           "MiniMax-M2-highspeed",
-        "provider":        "minimax",
-        "base_url":        "https://api.minimax.io/v1",
-        "api_key_env":     "MINIMAX_API_KEY",
-        "description":     "MiniMax M2 high-speed variant",
-        "config_overrides": {"max_tokens": 16384},
-    },
-    "m2-opti": {
-        "model":           "MiniMax-M2",
-        "provider":        "minimax",
-        "base_url":        "http://127.0.0.1:8765/v1",  # local optillm proxy
-        "api_key_env":     "MINIMAX_API_KEY",
-        "description":     "MiniMax M2 via local OptiLLM proxy (run optillm-up.sh first)",
-        "config_overrides": {
-            "max_tokens":          16384,
-            "optillm_approach":    "cot_reflection",
         },
     },
 }

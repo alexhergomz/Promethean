@@ -1,24 +1,15 @@
 """
-Multi-provider support for Promethean.
+Backend support for Promethean.
 
-Supported providers:
-  anthropic  — Claude (claude-opus-4-6, claude-sonnet-4-6, ...)
-  openai     — GPT (gpt-4o, o3-mini, ...)
-  gemini     — Google Gemini (gemini-2.0-flash, gemini-1.5-pro, ...)
-  kimi       — Moonshot AI (moonshot-v1-8k/32k/128k)
-  qwen       — Alibaba DashScope (qwen-max, qwen-plus, ...)
-  zhipu      — Zhipu GLM (glm-4, glm-4-plus, ...)
-  deepseek   — DeepSeek (deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner)
-  minimax    — MiniMax (MiniMax-M2, MiniMax-M1, MiniMax-Text-01, abab*, ...)
-  ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
-  lmstudio   — Local LM Studio (any loaded model)
-  custom     — Any OpenAI-compatible endpoint
+The harness targets a single backend: llama.cpp (llama-server) over the
+OpenAI-compatible protocol, exposed as the ``custom`` provider. Point it at
+llama-server (the default loopback) or any other OpenAI-compatible server via
+``config["custom_base_url"]``. Keeping one transport is a deliberate
+maintainability choice — see README ("llama.cpp-only").
 
 Model string formats:
-  "claude-opus-4-6"          auto-detected → anthropic
-  "gpt-4o"                   auto-detected → openai
-  "ollama/qwen2.5-coder"     explicit provider prefix
-  "custom/my-model"          uses CUSTOM_BASE_URL from config
+  "custom/qwen3.5-9b"        explicit provider prefix (recommended)
+  "qwen3.5-9b"               bare name → custom
 """
 from __future__ import annotations
 import json
@@ -29,227 +20,38 @@ from typing import Generator
 # ── Provider registry ──────────────────────────────────────────────────────
 
 PROVIDERS: dict[str, dict] = {
-    "anthropic": {
-        "type":       "anthropic",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "context_limit": 200000,
-        "models": [
-            "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
-            "claude-opus-4-5", "claude-sonnet-4-5",
-            "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-        ],
-    },
-    "openai": {
-        "type":       "openai",
-        "api_key_env": "OPENAI_API_KEY",
-        "base_url":   "https://api.openai.com/v1",
-        "context_limit": 128000,
-        "max_completion_tokens": 16384,  # safe cap across gpt-4o/gpt-4.1 family
-        "models": [
-            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini",
-            "gpt-5", "gpt-5-nano", "gpt-5-mini",
-            "o4-mini", "o3", "o3-mini", "o1", "o1-mini",
-        ],
-    },
-    "gemini": {
-        "type":       "openai",
-        "api_key_env": "GEMINI_API_KEY",
-        "base_url":   "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "context_limit": 1000000,
-        "models": [
-            "gemini-2.5-pro-preview-03-25",
-            "gemini-2.0-flash", "gemini-2.0-flash-lite",
-            "gemini-1.5-pro", "gemini-1.5-flash",
-        ],
-    },
-    "kimi": {
-        "type":       "openai",
-        "api_key_env": "MOONSHOT_API_KEY",
-        "base_url":   "https://api.moonshot.cn/v1",
-        "context_limit": 128000,
-        "models": [
-            "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k",
-            "kimi-latest",
-        ],
-    },
-    "qwen": {
-        "type":       "openai",
-        "api_key_env": "DASHSCOPE_API_KEY",
-        "base_url":   "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "context_limit": 1000000,
-        "models": [
-            "qwen-max", "qwen-plus", "qwen-turbo", "qwen-long",
-            "qwen2.5-72b-instruct", "qwen2.5-coder-32b-instruct",
-            "qwq-32b",
-        ],
-    },
-    "zhipu": {
-        "type":       "openai",
-        "api_key_env": "ZHIPU_API_KEY",
-        "base_url":   "https://open.bigmodel.cn/api/paas/v4/",
-        "context_limit": 128000,
-        "models": [
-            "glm-4-plus", "glm-4", "glm-4-flash", "glm-4-air",
-            "glm-z1-flash",
-        ],
-    },
-    "deepseek": {
-        "type":       "openai",
-        "api_key_env": "DEEPSEEK_API_KEY",
-        "base_url":   "https://api.deepseek.com/v1",
-        "context_limit": 128000,
-        "models": [
-            "deepseek-v4-pro", "deepseek-v4-flash",
-            "deepseek-chat", "deepseek-coder", "deepseek-reasoner",
-        ],
-    },
-    "minimax": {
-        "type":       "openai",
-        "api_key_env": "MINIMAX_API_KEY",
-        # Global endpoint (platform.minimax.io accounts). China users can
-        # override via config["minimax_base_url"] = "https://api.minimaxi.chat/v1".
-        "base_url":   "https://api.minimax.io/v1",
-        # Provider-wide default. The M2 family (current flagship) is 204_800;
-        # M1 / Text-01 are 1M. compaction.get_context_limit() consults
-        # per_model_context_limits first so the right cap is used per request.
-        "context_limit": 204_800,
-        # Calibrated 2026-05-13 against the live M2 endpoint. See TODO_NEXT.md
-        # ("per-provider tokenizer calibration"). Code+JSON measured at
-        # 1.8–2.2 chars/token; long English at 5.4. Coding traffic skews
-        # heavily to the dense end so pick the safe low value — overflow
-        # on a wrong-direction estimate is the catastrophic failure mode.
-        "token_estimate_chars_per_token": 2.0,
-        "token_estimate_per_msg_overhead": 20,
-        "per_model_context_limits": {
-            "MiniMax-M2":              204_800,
-            "MiniMax-M2-highspeed":    204_800,
-            "MiniMax-M2.1":            204_800,
-            "MiniMax-M2.1-highspeed":  204_800,
-            "MiniMax-M2.5":            204_800,
-            "MiniMax-M2.5-highspeed":  204_800,
-            "MiniMax-M2.7":            204_800,
-            "MiniMax-M2.7-highspeed":  204_800,
-            "MiniMax-M1":              1_000_000,
-            "MiniMax-Text-01":         1_000_000,
-            "MiniMax-VL-01":           1_000_000,
-            "abab6.5s-chat":           245_760,
-            "abab6.5-chat":            32_768,
-            "abab5.5s-chat":           8_192,
-            "abab5.5-chat":            16_384,
-        },
-        "models": [
-            # Coding-agent flagships first — these are the recommended defaults.
-            "MiniMax-M2", "MiniMax-M2-highspeed",
-            "MiniMax-M2.7", "MiniMax-M2.7-highspeed",
-            "MiniMax-M2.5", "MiniMax-M2.5-highspeed",
-            "MiniMax-M2.1", "MiniMax-M2.1-highspeed",
-            # Reasoning + long-context.
-            "MiniMax-M1",
-            # Legacy.
-            "MiniMax-Text-01", "MiniMax-VL-01",
-            "abab6.5s-chat", "abab6.5-chat",
-            "abab5.5s-chat", "abab5.5-chat",
-        ],
-    },
-    "ollama": {
-        "type":       "ollama",
-        "api_key_env": None,
-        "base_url":   "http://localhost:11434",
-        "api_key":    "ollama",
-        "context_limit": 128000,
-        "models": [
-            "llama3.3", "llama3.2", "phi4", "mistral", "mixtral",
-            "qwen2.5-coder", "deepseek-r1", "gemma3",
-        ],
-    },
-    "lmstudio": {
-        "type":       "openai",
-        "api_key_env": None,
-        "base_url":   "http://localhost:1234/v1",
-        "api_key":    "lm-studio",
-        "context_limit": 128000,
-        "models": [],   # dynamic, depends on loaded model
-    },
+    # The one backend: llama.cpp / llama-server (or any OpenAI-compatible
+    # server) reached over the OpenAI protocol. base_url is read from
+    # config["custom_base_url"]; it defaults to the local llama-server loopback.
     "custom": {
         "type":       "openai",
-        "api_key_env": "CUSTOM_API_KEY",
-        "base_url":   None,   # read from config["custom_base_url"]
+        "api_key_env": "CUSTOM_API_KEY",   # llama-server needs none; kept for auth'd proxies
+        "base_url":   None,                # read from config["custom_base_url"]
         "context_limit": 128000,
         "models": [],
     },
 }
 
-# Cost per million tokens (approximate, fallback to 0 for unknown)
-COSTS = {
-    "claude-opus-4-6":          (15.0, 75.0),
-    "claude-sonnet-4-6":        (3.0,  15.0),
-    "claude-haiku-4-5-20251001": (0.8,  4.0),
-    "gpt-4o":                   (2.5,  10.0),
-    "gpt-4o-mini":              (0.15,  0.6),
-    "o3-mini":                  (1.1,   4.4),
-    "gemini-2.0-flash":         (0.075, 0.3),
-    "gemini-1.5-pro":           (1.25,  5.0),
-    "gemini-2.5-pro-preview-03-25": (1.25, 10.0),
-    "moonshot-v1-8k":           (1.0,   3.0),
-    "moonshot-v1-32k":          (2.4,   7.0),
-    "moonshot-v1-128k":         (8.0,  24.0),
-    "qwen-max":                 (2.4,   9.6),
-    "qwen-plus":                (0.4,   1.2),
-    "deepseek-chat":            (0.27,  1.1),
-    "deepseek-reasoner":        (0.55,  2.19),
-    # DeepSeek v4 — pricing placeholder (matches v3 tiers; verify before billing UX)
-    "deepseek-v4-flash":        (0.27,  1.1),
-    "deepseek-v4-pro":          (0.55,  2.19),
-    "glm-4-plus":               (0.7,   0.7),
-    # MiniMax — global tier, $/M tokens (input, output). Coding-plan tiers
-    # are quota-based (5-hour buckets); these numbers reflect the
-    # pay-as-you-go API pricing on platform.minimax.io as of 2026-05.
-    "MiniMax-M2":               (0.3,   1.2),
-    "MiniMax-M2-highspeed":     (0.3,   1.2),
-    "MiniMax-M2.1":             (0.3,   1.2),
-    "MiniMax-M2.1-highspeed":   (0.3,   1.2),
-    "MiniMax-M2.5":             (0.3,   1.2),
-    "MiniMax-M2.5-highspeed":   (0.3,   1.2),
-    "MiniMax-M2.7":             (0.3,   1.2),
-    "MiniMax-M2.7-highspeed":   (0.3,   1.2),
-    "MiniMax-M1":               (0.4,   2.2),
-    "MiniMax-Text-01":          (0.7,   2.1),
-    "abab6.5s-chat":            (0.1,   0.1),
-    "abab6.5-chat":             (0.5,   0.5),
-}
+# Local inference has no per-token cost. Kept as an (empty) mapping so callers
+# that look up COSTS keep working; calc_cost returns 0 for everything.
+COSTS: dict[str, tuple[float, float]] = {}
 
-# Auto-detection: prefix → provider name
-_PREFIXES = [
-    ("claude-",       "anthropic"),
-    ("gpt-",          "openai"),
-    ("o1",            "openai"),
-    ("o3",            "openai"),
-    ("gemini-",       "gemini"),
-    ("moonshot-",     "kimi"),
-    ("kimi-",         "kimi"),
-    ("qwen",          "qwen"),  # qwen-max, qwen2.5-...
-    ("qwq-",          "qwen"),
-    ("glm-",          "zhipu"),
-    ("deepseek-",     "deepseek"),
-    ("minimax-",      "minimax"),
-    ("MiniMax-",      "minimax"),
-    ("abab",          "minimax"),
-    ("llama",         "ollama"),
-    ("mistral",       "ollama"),
-    ("phi",           "ollama"),
-    ("gemma",         "ollama"),
-]
+# Prefix → provider auto-detection. With a single backend there is nothing to
+# disambiguate; detect_provider falls through to "custom".
+_PREFIXES: list[tuple[str, str]] = []
 
 
 def detect_provider(model: str) -> str:
-    """Return provider name for a model string.
-    Supports 'provider/model' explicit format, or auto-detect by prefix."""
+    """Return the provider name for a model string.
+
+    Supports the explicit 'provider/model' form; any bare name resolves to the
+    sole backend, ``custom`` (llama.cpp)."""
     if "/" in model:
         return model.split("/", 1)[0]
     for prefix, pname in _PREFIXES:
         if model.lower().startswith(prefix):
             return pname
-    return "openai"   # fallback
+    return "custom"
 
 
 def bare_model(model: str) -> str:
@@ -259,48 +61,10 @@ def bare_model(model: str) -> str:
 
 # ── Auto max_tokens cap ────────────────────────────────────────────────────
 
-# Per-model output limits for well-known models (output tokens, not context)
-_MODEL_OUTPUT_LIMITS: dict[str, int] = {
-    # Anthropic
-    "claude-opus-4-6":            16000,
-    "claude-sonnet-4-6":          16000,
-    "claude-haiku-4-5-20251001":  8192,
-    "claude-opus-4-5":            16000,
-    "claude-sonnet-4-5":          16000,
-    "claude-3-5-sonnet-20241022": 8192,
-    "claude-3-5-haiku-20241022":  8192,
-    # OpenAI
-    "gpt-4o":      16384,
-    "gpt-4o-mini": 16384,
-    "gpt-4.1":     32768,
-    "gpt-4.1-mini":32768,
-    "gpt-5":       32768,
-    "o1":          32768,
-    "o3":          100000,
-    "o4-mini":     100000,
-    # Gemini
-    "gemini-2.5-pro-preview-03-25": 65536,
-    "gemini-2.0-flash":             8192,
-    "gemini-1.5-pro":               8192,
-    # DeepSeek
-    "deepseek-chat":       8192,
-    "deepseek-reasoner":   32768,
-    "deepseek-v4-flash":   32768,
-    "deepseek-v4-pro":     32768,
-    # MiniMax — M2 family caps generation at 16384; M1 supports 40K/80K
-    # thinking-bound checkpoints. We pick conservative output caps that
-    # leave room for thinking and a reasonable prompt budget.
-    "MiniMax-M2":              16384,
-    "MiniMax-M2-highspeed":    16384,
-    "MiniMax-M2.1":            16384,
-    "MiniMax-M2.1-highspeed":  16384,
-    "MiniMax-M2.5":            16384,
-    "MiniMax-M2.5-highspeed":  16384,
-    "MiniMax-M2.7":            16384,
-    "MiniMax-M2.7-highspeed":  16384,
-    "MiniMax-M1":              40960,
-    "MiniMax-Text-01":         32768,
-}
+# Per-model hard output caps. Empty for the llama.cpp backend: a local server
+# reports its own limit via /v1/models (see _fetch_custom_model_limit), and
+# the user's configured max_tokens is otherwise respected as-is.
+_MODEL_OUTPUT_LIMITS: dict[str, int] = {}
 
 # Cache: base_url → {model_id → max_model_len}
 _custom_ctx_cache: dict[str, dict[str, int]] = {}
@@ -415,52 +179,6 @@ def tools_to_openai(tool_schemas: list) -> list:
 #       {"id": "...", "name": "...", "input": {...}}
 #   ]}
 #   {"role": "tool", "tool_call_id": "...", "name": "...", "content": "..."}
-
-def messages_to_anthropic(messages: list) -> list:
-    """Convert neutral messages → Anthropic API format."""
-    result = []
-    i = 0
-    while i < len(messages):
-        m = messages[i]
-        role = m["role"]
-
-        if role == "user":
-            result.append({"role": "user", "content": m["content"]})
-            i += 1
-
-        elif role == "assistant":
-            blocks = []
-            text = m.get("content", "")
-            if text:
-                blocks.append({"type": "text", "text": text})
-            for tc in m.get("tool_calls", []):
-                blocks.append({
-                    "type":  "tool_use",
-                    "id":    tc["id"],
-                    "name":  tc["name"],
-                    "input": tc["input"],
-                })
-            result.append({"role": "assistant", "content": blocks})
-            i += 1
-
-        elif role == "tool":
-            # Collect consecutive tool results into one user message
-            tool_blocks = []
-            while i < len(messages) and messages[i]["role"] == "tool":
-                t = messages[i]
-                tool_blocks.append({
-                    "type":        "tool_result",
-                    "tool_use_id": t["tool_call_id"],
-                    "content":     t["content"],
-                })
-                i += 1
-            result.append({"role": "user", "content": tool_blocks})
-
-        else:
-            i += 1
-
-    return result
-
 
 def messages_to_openai(messages: list, ollama_native_images: bool = False) -> list:
     """Convert neutral messages → OpenAI API format.
@@ -585,84 +303,6 @@ class AssistantTurn:
         self.finish_reason        = finish_reason
 
 
-def stream_anthropic(
-    api_key: str,
-    model: str,
-    system: str,
-    messages: list,
-    tool_schemas: list,
-    config: dict,
-) -> Generator:
-    """Stream from Anthropic API. Yields TextChunk/ThinkingChunk, then AssistantTurn."""
-    import anthropic as _ant
-    client = _ant.Anthropic(api_key=api_key)
-
-    _mt = resolve_max_tokens(config, "anthropic", model) or 8192
-    kwargs = {
-        "model":      model,
-        "max_tokens": _mt,
-        "system":     system,
-        "messages":   messages_to_anthropic(messages),
-        "tools":      tool_schemas,
-    }
-    if config.get("thinking"):
-        kwargs["thinking"] = {
-            "type":          "enabled",
-            "budget_tokens": config.get("thinking_budget", 10000),
-        }
-
-    tool_calls = []
-    text       = ""
-
-    with client.messages.stream(**kwargs) as stream:
-        for event in stream:
-            etype = getattr(event, "type", None)
-            if etype == "content_block_delta":
-                delta = event.delta
-                dtype = getattr(delta, "type", None)
-                if dtype == "text_delta":
-                    text += delta.text
-                    yield TextChunk(delta.text)
-                elif dtype == "thinking_delta":
-                    yield ThinkingChunk(delta.thinking)
-
-        final = stream.get_final_message()
-        for block in final.content:
-            if block.type == "tool_use":
-                tool_calls.append({
-                    "id":    block.id,
-                    "name":  block.name,
-                    "input": block.input,
-                })
-
-        cache_r, cache_w = _anthropic_cache_tokens(final.usage)
-        # Normalize Anthropic's stop_reason vocabulary to OpenAI's.
-        # "max_tokens" → "length" so the agent loop can use a single
-        # finish_reason="length" check across providers.
-        _stop = getattr(final, "stop_reason", "") or ""
-        finish_reason = "length" if _stop == "max_tokens" else _stop
-        yield AssistantTurn(
-            text, tool_calls,
-            final.usage.input_tokens,
-            final.usage.output_tokens,
-            cache_read_tokens=cache_r,
-            cache_write_tokens=cache_w,
-            finish_reason=finish_reason,
-        )
-
-
-def _anthropic_cache_tokens(usage) -> tuple[int, int]:
-    """Extract (cache_read, cache_write) token counts from an Anthropic usage object.
-
-    Returns (0, 0) if the fields are missing -- older Anthropic SDKs, non-cached
-    calls and most downstream wrappers (e.g. Bedrock over litellm) all fall
-    through to this default rather than raising AttributeError.
-    """
-    read  = getattr(usage, "cache_read_input_tokens", 0) or 0
-    write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-    return int(read), int(write)
-
-
 def _openai_cached_read_tokens(usage) -> int:
     """Extract the OpenAI-compatible cached read-token count.
 
@@ -698,13 +338,14 @@ def stream_openai_compat(
         "stream":   True,
     }
 
-    # Pass num_ctx for known Ollama/LM Studio ports only — avoids matching other local servers (e.g. vLLM on :8000)
-    _is_local_ollama = "11434" in base_url
-    _is_lmstudio     = "1234" in base_url and ("lmstudio" in base_url or "localhost" in base_url or "127.0.0.1" in base_url)
-    if _is_local_ollama or _is_lmstudio:
-        prov = detect_provider(model)
-        ctx_limit = PROVIDERS.get(prov if prov in ("ollama", "lmstudio") else "ollama", {}).get("context_limit", 128000)
-        kwargs["extra_body"] = {"options": {"num_ctx": ctx_limit}}
+    # If pointed at an Ollama or LM Studio server (rather than llama-server),
+    # forward the context window as num_ctx so the model isn't capped at the
+    # backend default. Other OpenAI-compatible servers ignore unknown options.
+    _is_ollama_port   = "11434" in base_url
+    _is_lmstudio_port = "1234" in base_url and ("localhost" in base_url or "127.0.0.1" in base_url)
+    if _is_ollama_port or _is_lmstudio_port:
+        ctx_limit = config.get("context_limit") if isinstance(config.get("context_limit"), int) else None
+        kwargs["extra_body"] = {"options": {"num_ctx": ctx_limit or 128000}}
 
     if tool_schemas and not config.get("no_tools"):
         kwargs["tools"] = tools_to_openai(tool_schemas)
@@ -723,46 +364,9 @@ def stream_openai_compat(
     if _prov == "custom" and config.get("_slot_id") is not None:
         kwargs.setdefault("extra_body", {})["id_slot"] = config["_slot_id"]
 
-    # DeepSeek v4: thinking is ON by default and controlled via extra_body.
-    # `thinking` is tri-state in DEFAULTS (cc_config.py): None = unset (let
-    # provider default stand → ON for v4), True = explicit ON (also default),
-    # False = explicit OFF (user toggled via /thinking).  Only the explicit-OFF
-    # case injects the disable toggle.  `is False` is intentional: distinguishes
-    # explicit False from None.
-    if _prov == "deepseek":
-        if config.get("thinking") is False:
-            kwargs.setdefault("extra_body", {})["thinking"] = {"type": "disabled"}
-        eff = config.get("reasoning_effort")
-        if eff:
-            kwargs["reasoning_effort"] = eff
-
-    # MiniMax M1/M2 emit chain-of-thought either inline as <think>…</think>
-    # blocks in `delta.content` (default) or split out into
-    # `delta.reasoning_details` when `reasoning_split=true` is passed via
-    # extra_body. We always opt into the split surface — it lets the UI
-    # render thinking via ThinkingChunk (consistent with DeepSeek / Kimi /
-    # Anthropic) and lets us replay reasoning verbatim on subsequent turns,
-    # which M2 requires when an assistant turn carries tool_calls.
-    #
-    # `thinking is False` (explicit /thinking off) is honoured by simply
-    # not requesting the split — content keeps the <think> tags and we
-    # strip them client-side at render time. There's no API knob to
-    # disable reasoning entirely on M1/M2; the only way to skip it is to
-    # pick a non-reasoning checkpoint (e.g. *-highspeed).
-    if _prov == "minimax" and config.get("thinking") is not False:
-        kwargs.setdefault("extra_body", {})["reasoning_split"] = True
-    # OptiLLM proxy integration. When the user runs the optillm OpenAI-compat
-    # proxy in front of a provider (e.g. MINIMAX_BASE_URL pointing at
-    # localhost:8000), this knob picks the inference-time technique applied
-    # by the proxy. Slugs: moa, mcts, bon, plansearch, cot_reflection, re2,
-    # self_consistency, mars, cepo. The proxy ignores the field if it
-    # doesn't recognize the slug. Cost: N× tokens; selective use only.
-    _optillm = config.get("optillm_approach")
-    if _optillm:
-        kwargs.setdefault("extra_body", {})["optillm_approach"] = _optillm
-    # Many providers (OpenAI/DeepSeek/Kimi/MiniMax/Groq/GLM) only emit the
-    # final usage chunk when stream_options.include_usage=True. Without it,
-    # in_tok/out_tok stay at 0 and per-turn cost reporting breaks. Safe to
+    # Request the final usage chunk. Many OpenAI-compatible servers only emit
+    # token usage when stream_options.include_usage=True. Without it,
+    # in_tok/out_tok stay at 0 and per-turn accounting breaks. Safe to
     # set on all openai-compat providers; unknown providers ignore it.
     kwargs.setdefault("stream_options", {})["include_usage"] = True
     _effective_mt = resolve_max_tokens(config, _prov, model, base_url, api_key)
@@ -929,121 +533,6 @@ def stream_openai_compat(
     )
 
 
-def stream_ollama(
-    base_url: str,
-    model: str,
-    system: str,
-    messages: list,
-    tool_schemas: list,
-    config: dict,
-) -> Generator:
-    # pass_images=True: Ollama /api/chat accepts base64 images natively in the message
-    oai_messages = [{"role": "system", "content": system}] + messages_to_openai(messages, ollama_native_images=True)
-    
-    # Ollama requires tool arguments as dict objects, not strings. OpenAI uses strings.
-    for m in oai_messages:
-        if m.get("content") is None:
-            m["content"] = ""
-        if "tool_calls" in m and m["tool_calls"]:
-            for tc in m["tool_calls"]:
-                fn = tc.get("function", {})
-                if isinstance(fn.get("arguments"), str):
-                    try:
-                        fn["arguments"] = json.loads(fn["arguments"])
-                    except json.JSONDecodeError:
-                        import sys
-                        print(f"[warn] Failed to parse tool arguments as JSON, leaving as string: {fn['arguments']!r}", file=sys.stderr)
-    
-    payload = {
-        "model": model,
-        "messages": oai_messages,
-        "stream": True,
-        "options": {
-            "num_ctx": config.get("context_limit", 128000)
-        }
-    }
-    
-    if tool_schemas and not config.get("no_tools"):
-        payload["tools"] = tools_to_openai(tool_schemas)
-
-    def _make_request(p):
-        return urllib.request.Request(
-            f"{base_url.rstrip('/')}/api/chat",
-            data=json.dumps(p).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
-        )
-
-    req = _make_request(payload)
-
-    text = ""
-    tool_buf: dict = {}
-
-    try:
-        resp_cm = urllib.request.urlopen(req)
-    except urllib.error.URLError as e:
-        raise ConnectionError(
-            f"Cannot connect to Ollama at {base_url}. "
-            f"Is it running? Start with: ollama serve\n  ({e})"
-        ) from e
-    except urllib.error.HTTPError as e:
-        if e.code == 500 and "tools" in payload:
-            # Model doesn't support tool calling — retry without tools.
-            # Close the error response before retrying.
-            e.close()
-            print(
-                f"\n\033[33m[warn] {model} does not support tool calling."
-                " Retrying in chat-only mode (no file editing, search, etc.).\033[0m"
-            )
-            payload.pop("tools", None)
-            req = _make_request(payload)
-            resp_cm = urllib.request.urlopen(req)
-        elif e.code == 404:
-            raise ValueError(
-                f"Ollama model '{model}' not found. Pull it with: ollama pull {model}\n"
-                f"  Or pick from local models: /model ollama"
-            ) from e
-        else:
-            raise
-
-    with resp_cm as resp:
-        for line in resp:
-            if not line.strip(): continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            
-            msg = data.get("message", {})
-            
-            # Ollama native reasoning models stream thoughts here
-            if "thinking" in msg and msg["thinking"]:
-                yield ThinkingChunk(msg["thinking"])
-                
-            if "content" in msg and msg["content"]:
-                text += msg["content"]
-                yield TextChunk(msg["content"])
-            
-            # Handle native ollama tools format which mirrors OpenAI
-            for tc in msg.get("tool_calls", []):
-                fn = tc.get("function", {})
-                idx = len(tool_buf) # Ollama sends complete tool calls, not delta
-                tool_buf[idx] = {
-                    "id": "call_ollama" + str(idx),
-                    "name": fn.get("name", ""),
-                    "args": json.dumps(fn.get("arguments", {})),
-                    "input": fn.get("arguments", {})
-                }
-
-    tool_calls = []
-    for idx in sorted(tool_buf):
-        v = tool_buf[idx]
-        tool_calls.append({"id": v["id"], "name": v["name"], "input": v["input"]})
-
-    # Ollama doesn't return exact token counts via livestream easily until "done",
-    # but we can do a rough estimate or 0, promethean handles zero gracefully
-    yield AssistantTurn(text, tool_calls, 0, 0, 0, 0)
-
-
 def _recover_text_tool_calls(turn: "AssistantTurn", tool_schemas: list, config: dict) -> None:
     """Recover tool calls a model wrote as text and attach them to ``turn``.
 
@@ -1107,7 +596,7 @@ def stream(
 
     provider_name = detect_provider(model)
     model_name    = bare_model(model)
-    prov          = PROVIDERS.get(provider_name, PROVIDERS["openai"])
+    prov          = PROVIDERS.get(provider_name, PROVIDERS["custom"])
     api_key       = get_api_key(provider_name, config)
     session_id    = config.get("_session_id", "default")
 
@@ -1123,39 +612,22 @@ def stream(
                provider=provider_name, model=model_name)
 
     # ── Build inner generator ──────────────────────────────────────────────
-    if prov["type"] == "anthropic":
-        inner = stream_anthropic(api_key, model_name, system, messages, tool_schemas, config)
-    elif prov["type"] == "ollama":
-        import os as _os
-        base_url = (
-            _os.environ.get("OLLAMA_BASE_URL")
-            or config.get("ollama_base_url")
-            or prov.get("base_url", "http://localhost:11434")
+    # One backend: llama.cpp / any OpenAI-compatible server. base_url comes
+    # from config["custom_base_url"] (or the CUSTOM_BASE_URL env var); a named
+    # profile may also seed prov["base_url"].
+    import os as _os
+    base_url = (config.get("custom_base_url")
+                or _os.environ.get("CUSTOM_BASE_URL", "")
+                or prov.get("base_url") or "")
+    if not base_url:
+        raise ValueError(
+            "No backend configured. Point Promethean at llama-server (or any "
+            "OpenAI-compatible server): set CUSTOM_BASE_URL, or run "
+            "/config custom_base_url=http://127.0.0.1:8080/v1"
         )
-        inner = stream_ollama(base_url, model_name, system, messages, tool_schemas, config)
-    else:
-        import os as _os
-        if provider_name == "custom":
-            base_url = (config.get("custom_base_url")
-                        or _os.environ.get("CUSTOM_BASE_URL", ""))
-            if not base_url:
-                raise ValueError(
-                    "custom provider requires a base_url. "
-                    "Set CUSTOM_BASE_URL env var or run: /config custom_base_url=http://..."
-                )
-        elif provider_name == "minimax":
-            # Allow per-region override. Global accounts use the registry
-            # default; China accounts can flip to api.minimaxi.chat via
-            # config["minimax_base_url"] or env MINIMAX_BASE_URL without
-            # touching the provider table.
-            base_url = (config.get("minimax_base_url")
-                        or _os.environ.get("MINIMAX_BASE_URL")
-                        or prov.get("base_url", "https://api.minimax.io/v1"))
-        else:
-            base_url = prov.get("base_url", "https://api.openai.com/v1")
-        inner = stream_openai_compat(
-            api_key, base_url, model_name, system, messages, tool_schemas, config
-        )
+    inner = stream_openai_compat(
+        api_key, base_url, model_name, system, messages, tool_schemas, config
+    )
 
     # ── Yield with failure tracking ────────────────────────────────────────
     try:
@@ -1182,14 +654,3 @@ def stream(
                    error_type=type(exc).__name__, error=str(exc)[:200])
         raise
 
-
-def list_ollama_models(base_url: str) -> list[str]:
-    """Fetch locally available model tags from Ollama server."""
-    try:
-        url = f"{base_url.rstrip('/')}/api/tags"
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            # Ollama returns {"models": [{"name": "llama3:latest", ...}, ...]}
-            return [m["name"] for m in data.get("models", [])]
-    except (OSError, urllib.error.URLError, json.JSONDecodeError):
-        return []

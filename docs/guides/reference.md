@@ -155,79 +155,49 @@ Type `/` and press **Tab** to see all commands with descriptions. Continue typin
 | `/doctor` | Diagnose installation health: Python, git, API key, optional deps, CLAUDE.md, checkpoint disk usage |
 | `/exit` / `/quit` | Exit |
 
-**Switching models inside a session:**
+**Choosing your model:**
 
-<div align=center>
-<img src="https://github.com/SafeRL-Lab/cheetahclaws/blob/main/docs/multimodel_demo.gif" width="850"/>
-</div>
-<div align=center>
-<center style="color:#000000;text-decoration:underline">Multi-Model Switching: Claude → GPT-4o → Ollama → back, full history preserved</center>
-</div>
+Promethean targets a single backend — llama.cpp (llama-server) over the
+OpenAI-compatible protocol, exposed as the `custom` provider. The same path
+also drives any other OpenAI-compatible server (Ollama's `/v1`, LM Studio, vLLM).
 
 ```
 [myproject] ❯ /model
-  Current model: claude-opus-4-6  (provider: anthropic)
+  Current model: custom/qwen3.5-9b  (provider: custom)
 
-  Available models by provider:
-    anthropic     claude-opus-4-6, claude-sonnet-4-6, ...
-    openai        gpt-4o, gpt-4o-mini, o3-mini, ...
-    ollama        llama3.3, llama3.2, phi4, mistral, ...
-    ...
+  /model recommend   — best local GGUF for your hardware
 
-[myproject] ❯ /model gpt-4o
-  Model set to gpt-4o  (provider: openai)
+  Backend:  llama.cpp — llama-server, or any OpenAI-compatible endpoint
 
-[myproject] ❯ /model ollama/qwen2.5-coder
-  Model set to ollama/qwen2.5-coder  (provider: ollama)
+[myproject] ❯ /model custom/qwen3.5-27b
+  Model set to custom/qwen3.5-27b  (provider: custom)
 ```
 
 ---
 
-## Configuring API Keys
+## Configuring the backend
 
-### Method 1: Environment Variables (recommended)
-
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
-export GEMINI_API_KEY=AIza...
-export MOONSHOT_API_KEY=sk-...       # Kimi
-export DASHSCOPE_API_KEY=sk-...      # Qwen
-export ZHIPU_API_KEY=...             # Zhipu GLM
-export DEEPSEEK_API_KEY=sk-...       # DeepSeek
-export MINIMAX_API_KEY=...           # MiniMax
-```
-
-### Method 2: Set Inside the REPL (persisted)
+Point Promethean at your server (it defaults to the local llama-server loopback):
 
 ```
-/config anthropic_api_key=sk-ant-...
-/config openai_api_key=sk-...
-/config gemini_api_key=AIza...
-/config kimi_api_key=sk-...
-/config qwen_api_key=sk-...
-/config zhipu_api_key=...
-/config deepseek_api_key=sk-...
-/config minimax_api_key=...
+/config custom_base_url=http://127.0.0.1:8080/v1
+/model custom/qwen3.5-9b
 ```
 
-Keys are saved to `~/.promethean/config.json` and loaded automatically on next launch.
+The base URL and model are saved to `~/.promethean/config.json` and loaded on
+next launch. llama-server needs no API key; if you front it with an
+authenticated proxy, set one with `/config custom_api_key=...`.
 
-### Method 3: Edit the Config File Directly
+### Edit the config file directly
 
 ```json
 // ~/.promethean/config.json
 {
-  "model": "qwen/qwen-max",
+  "model": "custom/qwen3.5-9b",
+  "custom_base_url": "http://127.0.0.1:8080/v1",
   "max_tokens": 8192,
-  "permission_mode": "auto",
-  "verbose": false,
-  "thinking": false,
-  "qwen_api_key": "sk-...",
-  "kimi_api_key": "sk-...",
-  "deepseek_api_key": "sk-...",
-  "minimax_api_key": "..."
+  "context_limit": 57344,
+  "permission_mode": "auto"
 }
 ```
 
