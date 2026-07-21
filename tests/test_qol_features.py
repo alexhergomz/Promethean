@@ -23,11 +23,10 @@ import hooks
 # ── Profiles ────────────────────────────────────────────────────────────
 
 class TestProfiles:
-    def test_default_set_includes_alex_two(self):
+    def test_default_set_is_local(self):
         profiles = model_profiles.get_profiles({})
         assert "qwen" in profiles
-        assert "m2" in profiles
-        assert profiles["m2"]["model"] == "MiniMax-M2"
+        assert profiles["qwen"]["provider"] == "custom"
         assert profiles["qwen"]["base_url"].startswith("http://127.0.0.1")
 
     def test_apply_swaps_model_and_base_url(self):
@@ -38,37 +37,16 @@ class TestProfiles:
         assert cfg["custom_base_url"] == "http://127.0.0.1:8080/v1"
         assert cfg["context_limit"] == 57344
 
-    def test_apply_minimax_sets_minimax_base_url(self):
-        cfg = {}
-        model_profiles.apply("m2-opti", cfg)
-        # m2-opti points at the local optillm proxy.
-        assert cfg["minimax_base_url"].startswith("http://127.0.0.1:8765")
-        assert cfg["optillm_approach"] == "cot_reflection"
+    def test_user_can_add_profiles_via_config(self):
+        # Custom profiles overlay the defaults from config.
+        cfg = {"model_profiles": {"big": {"model": "custom/qwen3.5-27b"}}}
+        profiles = model_profiles.get_profiles(cfg)
+        assert profiles["big"]["model"] == "custom/qwen3.5-27b"
 
     def test_apply_unknown_profile(self):
         ok_, msg = model_profiles.apply("does-not-exist", {})
         assert ok_ is False
         assert "no such profile" in msg
-
-    def test_key_status_env(self, monkeypatch):
-        monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
-        profiles = model_profiles.get_profiles({})
-        has, src = model_profiles.key_status(profiles["m2"])
-        assert has is True and src == "env"
-
-    def test_key_status_config_fallback(self, monkeypatch):
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-        profiles = model_profiles.get_profiles({})
-        has, src = model_profiles.key_status(
-            profiles["m2"], {"minimax_api_key": "config-stored"},
-        )
-        assert has is True and src == "config"
-
-    def test_key_status_none(self, monkeypatch):
-        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-        profiles = model_profiles.get_profiles({})
-        has, src = model_profiles.key_status(profiles["m2"])
-        assert has is False and src == "none"
 
     def test_local_provider_needs_no_key(self):
         profiles = model_profiles.get_profiles({})

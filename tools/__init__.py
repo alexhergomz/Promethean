@@ -37,7 +37,7 @@ from tools.research import _research  # noqa: F401
 from tools.notebook import _notebook_edit, _parse_cell_id  # noqa: F401
 
 from tools.diagnostics import (  # noqa: F401
-    _get_diagnostics, _detect_language, _run_quietly,
+    _get_diagnostics, _detect_language, _run_quietly, summarize_for_edit,
 )
 
 from tools.interaction import (  # noqa: F401
@@ -49,6 +49,12 @@ from tools.interaction import (  # noqa: F401
 
 from tool_registry import ToolDef, register_tool
 from tool_registry import execute_tool as _registry_execute
+
+# Extensions the auto verify-after-edit footer runs for. Kept to languages
+# whose single-file check is precise; JS/TS is excluded because a strict
+# whole-project type-check on one file is too noisy to auto-attach (the
+# GetDiagnostics tool still covers it on demand).
+_AUTO_VERIFY_EXTS = {".py", ".sh", ".bash", ".zsh"}
 
 
 def _bash_live_callback():
@@ -168,7 +174,7 @@ def _write_and_invalidate(p: dict, c: dict) -> str:
 
 def _edit_and_invalidate(p: dict, c: dict) -> str:
     """Wrap _edit to invalidate the file-context tracker on success."""
-    result = _edit(**p)
+    result = _edit(**p, fuzzy=c.get("fuzzy_edit", True))
     if not result.startswith("Error:"):
         _invalidate_file_tracker(p["file_path"], c)
     return result
@@ -208,7 +214,10 @@ TOOL_SCHEMAS = [
     {
         "name": "Edit",
         "description": (
-            "Replace exact text in a file. old_string must match exactly (including whitespace). "
+            "Replace text in a file. Match old_string exactly, including indentation, and "
+            "do not include Read's line-number prefixes. If the exact text isn't found, a "
+            "unique near-match (differing only in indentation or minor drift) is applied and "
+            "flagged; ambiguous matches are rejected. "
             "If old_string appears multiple times, use replace_all=true or add more context."
         ),
         "input_schema": {
@@ -707,6 +716,30 @@ def execute_tool(
             footer = _sc.for_edit(inputs, cwd=cfg.get("_cwd"))
             if footer:
                 result = result + footer
+        except Exception:
+            pass
+
+    # Auto verify-after-edit: run the file's checker after a successful
+    # Edit/Write and append any problems. A weak model rarely thinks to lint
+    # its own change; surfacing errors on the same turn turns "looks done but
+    # broke the file" into a self-correcting loop. Silent when the file is
+    # clean or no checker is installed. Controlled by config["verify_after_edit"].
+    if (cfg.get("verify_after_edit", True)
+            and name in ("Edit", "Write")
+            and not result.startswith(("Error", "Denied", "Blocked"))):
+        try:
+            import os as _os
+            fp = inputs.get("file_path", "")
+            if _os.path.splitext(fp)[1].lower() in _AUTO_VERIFY_EXTS:
+                issues = summarize_for_edit(
+                    fp, timeout=cfg.get("verify_after_edit_timeout", 15))
+                if issues:
+                    if len(issues) > 1500:
+                        issues = issues[:1500] + "\n[... truncated ...]"
+                    result += (
+                        "\n\n[verify] the edited file reports diagnostics — "
+                        "fix these if your change caused them:\n" + issues
+                    )
         except Exception:
             pass
 

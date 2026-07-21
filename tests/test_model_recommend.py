@@ -160,6 +160,23 @@ def test_detect_hardware_returns_struct():
     _ = hw.budget_gb
 
 
+def test_detection_never_raises_when_all_probes_fail(monkeypatch):
+    # Mirrors a Windows box with no NVIDIA GPU and no psutil: every probe
+    # comes up empty, but detection returns None rather than throwing.
+    monkeypatch.setattr(M, "_detect_ram_gb", lambda: None)
+    monkeypatch.setattr(M, "_detect_vram_gb", lambda: None)
+    hw = M.detect_hardware()
+    assert hw.budget_gb is None
+
+
+def test_recommend_command_survives_no_hardware(monkeypatch):
+    # With no detectable budget and no override, the command must degrade to
+    # a hint and return cleanly (this is the case that failed on Windows).
+    import commands.config_cmd as cc
+    monkeypatch.setattr(M, "detect_hardware", lambda: M.Hardware(None, None))
+    assert cc._cmd_model_recommend([], {}) is True
+
+
 def test_download_url_shape():
     url = M.download_url("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf")
     assert url == ("https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/"

@@ -255,31 +255,140 @@ def cmd_compact(args: str, state, config) -> bool:
     return True
 
 
+# File extensions → language name, for the /init tech-stack scan.
+_LANG_BY_EXT = {
+    ".py": "Python", ".js": "JavaScript", ".mjs": "JavaScript",
+    ".ts": "TypeScript", ".tsx": "TypeScript", ".jsx": "JavaScript",
+    ".go": "Go", ".rs": "Rust", ".java": "Java", ".kt": "Kotlin",
+    ".rb": "Ruby", ".php": "PHP", ".c": "C", ".h": "C", ".cpp": "C++",
+    ".cc": "C++", ".hpp": "C++", ".cs": "C#", ".swift": "Swift",
+    ".scala": "Scala", ".sh": "Shell", ".lua": "Lua",
+}
+
+# Directories skipped while scanning, and root manifests worth naming.
+_SCAN_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv",
+              "dist", "build", ".nano_claude", ".mypy_cache", ".pytest_cache",
+              "target", ".next", "vendor"}
+_MANIFESTS = ["pyproject.toml", "requirements.txt", "setup.py", "package.json",
+              "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "Gemfile",
+              "composer.json", "Makefile", "CMakeLists.txt", "Dockerfile"]
+_ENTRY_CANDIDATES = ["main.py", "__main__.py", "app.py", "manage.py", "cli.py",
+                     "index.js", "index.ts", "server.js", "main.go", "main.rs",
+                     "src/main.rs", "src/index.ts", "src/index.js"]
+
+
+def _scan_project(root: Path) -> dict:
+    """Best-effort deterministic survey of a repo for /init. Bounded so it
+    stays fast on large trees; no network, no model call."""
+    from collections import Counter
+    langs: Counter = Counter()
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SCAN_SKIP
+                       and not d.startswith(".")]
+        for fn in filenames:
+            ext = os.path.splitext(fn)[1].lower()
+            lang = _LANG_BY_EXT.get(ext)
+            if lang:
+                langs[lang] += 1
+            seen += 1
+            if seen > 20000:            # cap on very large repos
+                break
+        if seen > 20000:
+            break
+
+    manifests = [m for m in _MANIFESTS if (root / m).exists()]
+    entries = [e for e in _ENTRY_CANDIDATES if (root / e).exists()]
+    has_tests = (root / "tests").is_dir() or (root / "test").is_dir()
+    return {
+        "languages": [lang for lang, _ in langs.most_common(5)],
+        "manifests": manifests,
+        "entries": entries,
+        "has_tests": has_tests,
+        "test_command": _infer_test_command(root, manifests, has_tests),
+    }
+
+
+def _infer_test_command(root: Path, manifests: list[str], has_tests: bool) -> str:
+    """Guess how tests are run from the manifests present."""
+    if "package.json" in manifests:
+        try:
+            pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            if isinstance(pkg.get("scripts"), dict) and "test" in pkg["scripts"]:
+                return "npm test"
+        except Exception:
+            pass
+    if "Cargo.toml" in manifests:
+        return "cargo test"
+    if "go.mod" in manifests:
+        return "go test ./..."
+    if "Makefile" in manifests:
+        try:
+            mk = (root / "Makefile").read_text(encoding="utf-8")
+            if any(line.startswith("test:") for line in mk.splitlines()):
+                return "make test"
+        except Exception:
+            pass
+    if has_tests or "pyproject.toml" in manifests or "setup.py" in manifests:
+        return "pytest"
+    return ""
+
+
+def _render_claude_md(project_name: str, scan: dict) -> str:
+    """Render a starter CLAUDE.md from a project scan. Sections the scan
+    can't fill keep an HTML-comment prompt so the user knows what to add."""
+    def bullets(items):
+        return "".join(f"- {i}\n" for i in items)
+
+    tech = scan["languages"] + scan["manifests"]
+    lines = [f"# {project_name}\n"]
+
+    lines.append("## Project Overview")
+    lines.append("<!-- One or two sentences on what this project does. -->\n")
+
+    lines.append("## Tech Stack")
+    if tech:
+        lines.append(bullets(tech).rstrip())
+    else:
+        lines.append("<!-- Languages, frameworks, key dependencies. -->")
+    lines.append("")
+
+    lines.append("## Conventions")
+    lines.append("<!-- Coding style, naming, patterns to follow. -->\n")
+
+    lines.append("## Important Files")
+    if scan["entries"]:
+        lines.append(bullets(f"`{e}`" for e in scan["entries"]).rstrip())
+    else:
+        lines.append("<!-- Key entry points, config files. -->")
+    lines.append("")
+
+    lines.append("## Testing")
+    if scan["test_command"]:
+        lines.append(f"Run the test suite with `{scan['test_command']}`.")
+    else:
+        lines.append("<!-- How to run tests, testing conventions. -->")
+    lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
 def cmd_init(args: str, state, config) -> bool:
-    """Initialize a CLAUDE.md file in the current directory."""
-    target = Path.cwd() / "CLAUDE.md"
+    """Create a starter CLAUDE.md, pre-filled from a scan of the repo."""
+    root = Path.cwd()
+    target = root / "CLAUDE.md"
     if target.exists():
         err(f"CLAUDE.md already exists at {target}")
         info("Edit it directly or delete it first.")
         return True
 
-    project_name = Path.cwd().name
-    template = (
-        f"# {project_name}\n\n"
-        "## Project Overview\n"
-        "<!-- Describe what this project does -->\n\n"
-        "## Tech Stack\n"
-        "<!-- Languages, frameworks, key dependencies -->\n\n"
-        "## Conventions\n"
-        "<!-- Coding style, naming conventions, patterns to follow -->\n\n"
-        "## Important Files\n"
-        "<!-- Key entry points, config files, etc. -->\n\n"
-        "## Testing\n"
-        "<!-- How to run tests, testing conventions -->\n\n"
-    )
-    target.write_text(template, encoding="utf-8")
+    scan = _scan_project(root)
+    target.write_text(_render_claude_md(root.name, scan), encoding="utf-8")
     info(f"Created {target}")
-    info("Edit it to give Claude context about your project.")
+    detected = scan["languages"] or scan["manifests"]
+    if detected:
+        info(f"Detected: {', '.join(detected)}")
+    info("Edit it to describe the project for the agent.")
     return True
 
 
@@ -448,92 +557,30 @@ def cmd_doctor(args: str, state, config) -> bool:
         _warn("Could not check git repo status")
 
     model = config.get("model", "")
-    provider = detect_provider(model)
-    key = get_api_key(provider, config)
+    base = config.get("custom_base_url") or os.environ.get("CUSTOM_BASE_URL", "")
+    key  = get_api_key(detect_provider(model), config)
 
-    if key:
-        _ok(f"API key for {provider}: set ({key[:4]}...{key[-4:]})")
-    elif provider in ("ollama", "lmstudio"):
-        _ok(f"Provider {provider}: no key needed (local)")
+    if not base:
+        _fail("No backend configured — set custom_base_url "
+              "(llama-server, e.g. http://127.0.0.1:8080/v1)")
     else:
-        _fail(f"API key for {provider}: NOT SET")
-
-    if key or provider in ("ollama", "lmstudio"):
-        print(f"  ... testing {provider} API connectivity...")
+        print(f"  ... testing backend at {base} ...")
         try:
             import urllib.request, urllib.error
-            prov = PROVIDERS.get(provider, {})
-            ptype = prov.get("type", "openai")
-
-            if ptype == "anthropic":
-                req = urllib.request.Request(
-                    "https://api.anthropic.com/v1/messages",
-                    data=json.dumps({
-                        "model": model,
-                        "max_tokens": 1,
-                        "messages": [{"role": "user", "content": "hi"}],
-                    }).encode(),
-                    headers={
-                        "x-api-key": key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                )
-                try:
-                    urllib.request.urlopen(req, timeout=10)
-                    _ok(f"Anthropic API: reachable, model {model} works")
-                except urllib.error.HTTPError as e:
-                    if e.code == 401:
-                        _fail("Anthropic API: invalid API key (401)")
-                    elif e.code == 404:
-                        _fail(f"Anthropic API: model {model} not found (404)")
-                    elif e.code == 429:
-                        _warn("Anthropic API: rate limited (429) — key is valid")
-                    else:
-                        _warn(f"Anthropic API: HTTP {e.code}")
-                except Exception as e:
-                    _fail(f"Anthropic API: connection error — {e}")
-            elif ptype == "ollama":
-                base = prov.get("base_url", "http://localhost:11434")
-                try:
-                    urllib.request.urlopen(f"{base}/api/tags", timeout=5)
-                    _ok(f"Ollama: reachable at {base}")
-                except Exception:
-                    _fail(f"Ollama: cannot reach {base} — is Ollama running?")
-            else:
-                base = prov.get("base_url", "")
-                if provider == "custom":
-                    base = config.get("custom_base_url", base or "")
-                if base:
-                    models_url = base.rstrip("/") + "/models"
-                    req = urllib.request.Request(
-                        models_url,
-                        headers={"Authorization": f"Bearer {key}"},
-                    )
-                    try:
-                        urllib.request.urlopen(req, timeout=10)
-                        _ok(f"{provider} API: reachable")
-                    except urllib.error.HTTPError as e:
-                        if e.code == 401:
-                            _fail(f"{provider} API: invalid API key (401)")
-                        elif e.code == 429:
-                            _warn(f"{provider} API: rate limited (429) — key is valid")
-                        else:
-                            _warn(f"{provider} API: HTTP {e.code}")
-                    except Exception as e:
-                        _fail(f"{provider} API: connection error — {e}")
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+            req = urllib.request.Request(base.rstrip("/") + "/models", headers=headers)
+            try:
+                urllib.request.urlopen(req, timeout=10)
+                _ok(f"Backend reachable at {base}")
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    _fail("Backend: unauthorized (401) — check custom_api_key")
                 else:
-                    _warn(f"{provider}: no base_url configured")
+                    _warn(f"Backend: HTTP {e.code}")
+            except Exception as e:
+                _fail(f"Backend: cannot reach {base} — is llama-server running? ({e})")
         except Exception as e:
-            _warn(f"API test skipped: {e}")
-
-    print()
-    for pname, pdata in PROVIDERS.items():
-        if pname == provider:
-            continue
-        env_var = pdata.get("api_key_env")
-        if env_var and os.environ.get(env_var, ""):
-            _ok(f"{pname} key ({env_var}): set")
+            _warn(f"Backend test skipped: {e}")
 
     # ── General network connectivity ──
     print()
@@ -603,163 +650,78 @@ def cmd_doctor(args: str, state, config) -> bool:
 
 # ── Setup wizard ──────────────────────────────────────────────────────────
 
-def run_setup_wizard(config: dict) -> None:
-    """Interactive first-run setup: pick provider, set API key, verify."""
-    from cc_config import save_config
-    from providers import PROVIDERS, detect_provider, get_api_key
-
-    print()
-    info("Welcome to Promethean! Let's get you set up.\n")
-
-    # ── Step 1: Pick provider ──
-    providers_list = [
-        ("ollama",    "Ollama (local, free, no API key)"),
-        ("anthropic", "Anthropic Claude (cloud, API key required)"),
-        ("openai",    "OpenAI GPT (cloud, API key required)"),
-        ("gemini",    "Google Gemini (cloud, API key required)"),
-        ("deepseek",  "DeepSeek (cloud, API key required)"),
-        ("custom",    "Custom OpenAI-compatible endpoint"),
-    ]
-
-    info("Which provider would you like to use?\n")
-    for i, (pname, desc) in enumerate(providers_list):
-        prov = PROVIDERS.get(pname, {})
-        env_var = prov.get("api_key_env", "")
-        env_set = bool(env_var and os.environ.get(env_var))
-        marker = clr(" (key detected)", "green") if env_set else ""
-        print(f"  {clr(f'[{i+1}]', 'yellow')} {desc}{marker}")
-
-    print()
+def _first_served_model(base_url: str) -> str | None:
+    """Return the first model id a server advertises on /v1/models, or None."""
     try:
-        choice = input(clr("  Select [1-6] (default: 1 for Ollama): ", "cyan")).strip()
+        import urllib.request
+        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=5) as resp:
+            data = json.loads(resp.read())
+        for entry in data.get("data", []):
+            if entry.get("id"):
+                return entry["id"]
+    except Exception:
+        pass
+    return None
+
+
+def run_setup_wizard(config: dict) -> None:
+    """Interactive first-run setup for the local llama.cpp backend."""
+    from cc_config import save_config
+
+    print()
+    info("Welcome to Promethean! Let's point it at your local model.\n")
+    info("Promethean runs against llama.cpp (llama-server) over the "
+         "OpenAI-compatible\nAPI — or any other OpenAI-compatible server.\n")
+
+    # ── Base URL ──
+    default_url = config.get("custom_base_url") or "http://127.0.0.1:8080/v1"
+    try:
+        base = input(clr(f"  Server base URL [{default_url}]: ", "cyan")).strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return
+    base = base or default_url
+    config["custom_base_url"] = base
 
-    idx = int(choice) - 1 if choice.isdigit() and 1 <= int(choice) <= len(providers_list) else 0
-    chosen_pname, chosen_desc = providers_list[idx]
-    prov = PROVIDERS.get(chosen_pname, {})
+    # ── Model ── prefer the model the server already has loaded.
+    default_model = config.get("model") or "custom/qwen3.5-9b"
+    if not default_model.startswith("custom/"):
+        default_model = "custom/qwen3.5-9b"
+    detected = _first_served_model(base)
+    if detected:
+        default_model = f"custom/{detected}"
+        ok(f"Detected loaded model: {detected}")
+    try:
+        m = input(clr(f"  Model [{default_model}]: ", "cyan")).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    model = m or default_model
+    if not model.startswith("custom/"):
+        model = "custom/" + model
+    config["model"] = model
 
-    # ── Step 2: Set model ──
-    models = prov.get("models", [])
-    if chosen_pname == "ollama":
-        # Check if Ollama is running and list local models
+    # ── Optional API key (only for authenticated proxies) ──
+    # llama-server needs none; a fronting proxy might. Leave blank to skip.
+    if not (os.environ.get("CUSTOM_API_KEY") or config.get("custom_api_key")):
         try:
-            from providers import list_ollama_models
-            base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-            local_models = list_ollama_models(base_url)
-            if local_models:
-                info(f"\nLocal Ollama models found:")
-                for i, m in enumerate(local_models[:10]):
-                    print(f"  {clr(f'[{i+1}]', 'yellow')} {m}")
-                print()
-                try:
-                    mc = input(clr("  Select a model number (default: 1): ", "cyan")).strip()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    return
-                mi = int(mc) - 1 if mc.isdigit() and 1 <= int(mc) <= len(local_models) else 0
-                config["model"] = f"ollama/{local_models[mi]}"
-            else:
-                warn("Ollama is running but no models found. Pull one with: ollama pull gemma4:e4b")
-                config["model"] = "ollama/gemma4:e4b"
-        except Exception:
-            warn("Cannot reach Ollama. Make sure it's running: ollama serve")
-            config["model"] = "ollama/gemma4:e4b"
-    elif models:
-        config["model"] = f"{chosen_pname}/{models[0]}" if chosen_pname != "anthropic" else models[0]
-        info(f"\nDefault model: {config['model']}")
-    else:
-        config["model"] = chosen_pname + "/default"
-
-    # ── Step 3: Set API key (if needed) ──
-    # `or ""` (not just .get(..., "")) is load-bearing: ollama / lmstudio
-    # entries in PROVIDERS have ``api_key_env: None``, and dict.get returns
-    # the stored None — not the default — when the key is present.  Passing
-    # None into os.environ.get raises TypeError ("str expected, not NoneType")
-    # because os.environ fsencodes its keys.  See issue #59.
-    env_var   = prov.get("api_key_env") or ""
-    key_field = f"{chosen_pname}_api_key"
-    existing_key = (os.environ.get(env_var, "") if env_var else "") \
-                   or config.get(key_field, "")
-
-    if chosen_pname not in ("ollama", "lmstudio"):
-        if existing_key:
-            ok(f"API key detected ({existing_key[:4]}...{existing_key[-4:]})")
-        else:
+            key = input(clr("  API key (blank for llama-server): ", "cyan")).strip()
+        except (EOFError, KeyboardInterrupt):
             print()
-            info(f"Enter your {chosen_desc.split('(')[0].strip()} API key")
-            if env_var:
-                info(f"(or set {env_var} env var and restart)")
-            try:
-                key_input = input(clr("  API key: ", "cyan")).strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return
-            if key_input:
-                config[key_field] = key_input
-                existing_key = key_input
+            return
+        if key:
+            config["custom_api_key"] = key
 
-    if chosen_pname == "custom":
-        base = config.get("custom_base_url", "")
-        if not base:
-            print()
-            try:
-                base = input(clr("  Base URL (e.g. http://localhost:8000/v1): ", "cyan")).strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return
-            if base:
-                config["custom_base_url"] = base
-
-    # ── Step 4: Verify connection ──
+    # ── Verify ──
     print()
     info("Verifying connection...")
-    try:
-        import urllib.request, urllib.error
-        if chosen_pname == "ollama":
-            base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-            urllib.request.urlopen(f"{base_url}/api/tags", timeout=5)
-            ok("Ollama: connected!")
-        elif chosen_pname == "anthropic" and existing_key:
-            req = urllib.request.Request(
-                "https://api.anthropic.com/v1/messages",
-                data=json.dumps({"model": config["model"], "max_tokens": 1,
-                                 "messages": [{"role": "user", "content": "hi"}]}).encode(),
-                headers={"x-api-key": existing_key, "anthropic-version": "2023-06-01",
-                          "content-type": "application/json"},
-            )
-            try:
-                urllib.request.urlopen(req, timeout=10)
-                ok("Anthropic API: connected!")
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    ok("Anthropic API: key valid (rate limited)")
-                elif e.code == 401:
-                    err("Invalid API key. You can fix it later with: /config anthropic_api_key=YOUR_KEY")
-                else:
-                    warn(f"Anthropic API: HTTP {e.code}")
-        elif existing_key:
-            base = prov.get("base_url", config.get("custom_base_url", ""))
-            if base:
-                req = urllib.request.Request(
-                    base.rstrip("/") + "/models",
-                    headers={"Authorization": f"Bearer {existing_key}"},
-                )
-                try:
-                    urllib.request.urlopen(req, timeout=10)
-                    ok(f"{chosen_pname} API: connected!")
-                except urllib.error.HTTPError as e:
-                    if e.code == 401:
-                        err("Invalid API key. Fix later with: /config")
-                    elif e.code == 429:
-                        ok(f"{chosen_pname} API: key valid (rate limited)")
-                    else:
-                        warn(f"{chosen_pname} API: HTTP {e.code}")
-    except Exception as e:
-        warn(f"Connection test failed: {e}")
+    if detected or _first_served_model(base):
+        ok("Connected to the server.")
+    else:
+        warn(f"Could not reach {base}.")
+        info("Start llama-server first, for example:")
+        info("  llama-server -m model.gguf -c 8192 --host 127.0.0.1 --port 8080")
 
-    # ── Save ──
     save_config(config)
     print()
     ok(f"Setup complete! Model: {config['model']}")

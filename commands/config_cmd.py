@@ -11,6 +11,15 @@ import os
 from ui.render import clr, info, ok, warn, err
 
 
+def _is_local_profile(p: dict) -> bool:
+    """A profile is local when it runs against a loopback backend — the
+    llama.cpp/OpenAI-compatible `custom` provider on this machine."""
+    if p.get("provider") == "custom":
+        return True
+    base = (p.get("base_url") or "")
+    return "127.0.0.1" in base or "localhost" in base
+
+
 def cmd_model(args: str, _state, config) -> bool:
     from providers import PROVIDERS, detect_provider
     import model_profiles as _mp
@@ -41,18 +50,21 @@ def cmd_model(args: str, _state, config) -> bool:
         pname = detect_provider(model)
         info(f"Current model:    {model}  (provider: {pname})")
 
-        # Profiles section — show first, this is the daily-driver shortcut.
+        # Hardware-matched local recommendation leads — this is a local-first
+        # harness, so the first thing offered is the model sized to this machine.
+        info(clr("\n  /model recommend", "cyan")
+             + clr("  — best local GGUF for your hardware (Qwen3.5, Gemma 4, Nemotron)", "dim"))
+
+        # Profiles — local only. A profile counts as local when it runs against
+        # a loopback backend (custom llama-server / Ollama / LM Studio).
         profiles = _mp.get_profiles(config)
-        if profiles:
+        local_profiles = {n: p for n, p in profiles.items()
+                          if _is_local_profile(p)}
+        if local_profiles:
             info("\nProfiles (quick switch):")
-            for name, p in profiles.items():
-                has_key, _src = _mp.key_status(p, config)
+            for name, p in local_profiles.items():
                 reach = _mp.reachable(p)
                 marks = []
-                if not has_key:
-                    marks.append(clr("no key", "red"))
-                elif p.get("api_key_env"):
-                    marks.append(clr("key ✓", "green"))
                 if reach is True:
                     marks.append(clr("reachable", "green"))
                 elif reach is False:
@@ -62,39 +74,15 @@ def cmd_model(args: str, _state, config) -> bool:
                 info(f"  {clr('/model ' + name, 'cyan'):24s} {p['model']:30s}{marker}{cur}")
                 info(f"    {clr(p.get('description',''), 'dim')}")
 
-        info("\nAvailable models by provider:")
-        for pn, pdata in PROVIDERS.items():
-            if pn == "ollama":
-                # Show live local models instead of hardcoded list
-                from providers import list_ollama_models
-                base_url = (
-                    os.environ.get("OLLAMA_BASE_URL")
-                    or config.get("ollama_base_url")
-                    or pdata.get("base_url", "http://localhost:11434")
-                )
-                local = list_ollama_models(base_url)
-                if local:
-                    info(f"  {'ollama':12s}  " + ", ".join(local[:6]) + ("..." if len(local) > 6 else ""))
-                    info(f"  {'':12s}  " + clr(f"({len(local)} local models — /model ollama to pick)", "dim"))
-                else:
-                    info(f"  {'ollama':12s}  " + clr("(not running or no models pulled)", "dim"))
-                continue
-            ms = pdata.get("models", [])
-            if ms:
-                info(f"  {pn:12s}  " + ", ".join(ms[:4]) + ("..." if len(ms) > 4 else ""))
-        info("\nFormat: 'provider/model' or just model name (auto-detected)")
-        info("  e.g. /model gpt-4o")
-        info("  e.g. /model ollama/qwen2.5-coder")
-        info("  e.g. /model kimi:moonshot-v1-32k")
-        info(clr("\n  /model recommend", "cyan")
-             + clr("  — hardware-matched local GGUF suggestions (Qwen3.5, Gemma 4, Nemotron)", "dim"))
+        # One backend: llama.cpp (llama-server) over the OpenAI-compatible
+        # protocol. The `custom` provider points at it (or any OpenAI-compatible
+        # server) via custom_base_url.
+        info("\nBackend:  " + clr("llama.cpp", "cyan")
+             + clr("  — llama-server, or any OpenAI-compatible endpoint via custom_base_url", "dim"))
+        info("\nSet a model with:  /model custom/<name>")
+        info("  e.g. /model custom/qwen3.5-9b")
     else:
         m = args.strip()
-        # "/model ollama" with no model name → interactive picker
-        if m == "ollama":
-            if _interactive_ollama_picker(config):
-                return True
-            return True
         if "/" not in m and ":" in m:
             left, right = m.split(":", 1)
             if left in PROVIDERS:
@@ -232,46 +220,6 @@ def cmd_api(args: str, _state, config) -> bool:
     save_config(config)
     ok(f"{provider} key saved (env {env_var}, also in ~/.promethean/config.json).")
     return True
-
-
-def _interactive_ollama_picker(config: dict) -> bool:
-    """Prompt the user to select from locally available Ollama models."""
-    from providers import PROVIDERS, list_ollama_models
-    from tools import ask_input_interactive
-    prov = PROVIDERS.get("ollama", {})
-    base_url = (
-        os.environ.get("OLLAMA_BASE_URL")
-        or config.get("ollama_base_url")
-        or prov.get("base_url", "http://localhost:11434")
-    )
-
-    models = list_ollama_models(base_url)
-    if not models:
-        err(f"No local Ollama models found at {base_url}.")
-        return False
-
-    menu_buf = clr("\n  ── Local Ollama Models ──", "dim")
-    for i, m in enumerate(models):
-        menu_buf += "\n" + clr(f"  [{i+1:2d}] ", "yellow") + m
-    print(menu_buf)
-    print()
-
-    try:
-        ans = ask_input_interactive(clr("  Select a model number or Enter to cancel > ", "cyan"), config, menu_buf).strip()
-        if not ans: return False
-        idx = int(ans) - 1
-        if 0 <= idx < len(models):
-            new_model = f"ollama/{models[idx]}"
-            config["model"] = new_model
-            from cc_config import save_config
-            save_config(config)
-            ok(f"Model updated to {new_model}")
-            return True
-        else:
-            err("Invalid selection.")
-    except (ValueError, KeyboardInterrupt, EOFError):
-        pass
-    return False
 
 
 def cmd_config(args: str, _state, config) -> bool:

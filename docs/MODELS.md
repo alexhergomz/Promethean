@@ -1,8 +1,10 @@
 # Choosing and installing a model
 
-Promethean is model-agnostic — it speaks OpenAI-compatible HTTP to whatever
-serves the model. This page is the practical "what do I download and how do I
-point Promethean at it" guide, separate from the tuned flagship stack.
+Promethean targets llama.cpp (llama-server) over the OpenAI-compatible
+protocol — the `custom` provider. Because that's the OpenAI standard, the same
+path also works against any other OpenAI-compatible server you run (Ollama's
+`/v1`, LM Studio, vLLM). This page is the practical "what do I download and how
+do I point Promethean at it" guide, separate from the tuned flagship stack.
 
 > **Shortcut:** run **`/model recommend`** in the REPL. It detects your
 > RAM/VRAM, pulls the live quantization lists from Hugging Face, and shows only
@@ -15,10 +17,11 @@ point Promethean at it" guide, separate from the tuned flagship stack.
   `llama.cpp` forks, for 224K context on an 8 GB AMD GPU. That's what the numbers
   in the README are measured against.
 - **Everything else (this page):** any GGUF on a stock `llama-server`, or any
-  Ollama / LM Studio / cloud model. No custom build required.
+  OpenAI-compatible server you already run. No custom build required.
 
-If you already run Ollama or LM Studio, you don't need to download anything
-separately — skip to [Point Promethean at it](#point-promethean-at-it).
+If you already run an OpenAI-compatible server (Ollama with `/v1`, LM Studio,
+vLLM), you don't need to download anything separately — skip to
+[Point Promethean at it](#point-promethean-at-it).
 
 ---
 
@@ -97,17 +100,17 @@ llama-server -m ~/.promethean/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf \
 `--jinja` applies the model's chat template so it can emit tool calls; `-ngl 99`
 offloads layers to the GPU; `-c` sets the context window.
 
-### C. Ollama / LM Studio / cloud
+### C. Another OpenAI-compatible server (Ollama, LM Studio, vLLM)
 
-No download step here — point at the running server:
+No download step here — point the `custom` provider at the running server's
+OpenAI endpoint:
 
 ```bash
-promethean -m ollama/qwen2.5-coder:7b        # Ollama
-promethean -m lmstudio/qwen2.5-coder-7b       # LM Studio
-promethean -m claude-sonnet-4-5               # cloud (needs an API key)
+/config custom_base_url=http://127.0.0.1:11434/v1   # Ollama's OpenAI API
+/model custom/qwen2.5-coder                          # a model it has loaded
 ```
 
-Switch any time with `/model <name>`. Named profiles (`/model qwen`) bundle
+Switch any time with `/model custom/<name>`. Named profiles (`/model qwen`) bundle
 model + provider + base URL into one alias.
 
 ---

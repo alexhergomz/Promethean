@@ -246,7 +246,28 @@ def _detect_ram_gb() -> float | None:
             return int(out.stdout.strip()) / 1e9
     except Exception:
         pass
-    # Fallback
+    # Windows — GlobalMemoryStatusEx via ctypes, no external tool needed.
+    try:
+        import ctypes
+
+        class _MemStatusEx(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        stat = _MemStatusEx()
+        stat.dwLength = ctypes.sizeof(stat)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return stat.ullTotalPhys / 1e9
+    except Exception:
+        pass
+    # Fallback (any OS, if psutil happens to be installed)
     try:
         import psutil
         return psutil.virtual_memory().total / 1e9
@@ -266,7 +287,7 @@ def _detect_vram_gb() -> float | None:
             continue
     if best > 0:
         return best / 1e9
-    # NVIDIA
+    # NVIDIA (Linux, Windows, WSL) — nvidia-smi is on PATH when present.
     try:
         import subprocess
         out = subprocess.run(
@@ -275,6 +296,25 @@ def _detect_vram_gb() -> float | None:
         if out.returncode == 0:
             mb = max(int(x) for x in out.stdout.split() if x.strip().isdigit())
             return mb / 1024
+    except Exception:
+        pass
+    # Windows (any GPU vendor) — the driver records dedicated VRAM in the
+    # registry as qwMemorySize, which (unlike WMI AdapterRAM) is not capped at
+    # 4 GB. Read the largest adapter's value via PowerShell.
+    try:
+        import subprocess
+        ps = (
+            r"Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\*'"
+            r" -EA SilentlyContinue"
+            r" | ForEach-Object { $_.'HardwareInformation.qwMemorySize' }"
+            r" | Sort-Object -Descending | Select-Object -First 1"
+        )
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=6)
+        val = out.stdout.strip()
+        if out.returncode == 0 and val.isdigit() and int(val) > 0:
+            return int(val) / 1e9
     except Exception:
         pass
     return None

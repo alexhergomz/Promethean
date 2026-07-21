@@ -11,6 +11,7 @@ the dependency one-way and eliminating any circular-import risk.
 from __future__ import annotations
 
 import difflib
+import os
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -114,6 +115,50 @@ def _fuzzy_rank(query: str, candidates: List[str]) -> List[str]:
     return [name for _, name in scored]
 
 
+# ── Path completion ────────────────────────────────────────────────────────
+
+def _path_token(text: str) -> str:
+    """The whitespace-delimited token under the cursor (the maximal non-space
+    suffix of the text left of the cursor). Empty if the cursor sits on a space."""
+    i = len(text)
+    while i > 0 and not text[i - 1].isspace():
+        i -= 1
+    return text[i:]
+
+
+def _looks_like_path(token: str) -> bool:
+    """Path-like enough to complete while typing (vs. only on an explicit Tab)."""
+    return ("/" in token) or token.startswith(("~", "."))
+
+
+def _filesystem_completions(token: str, limit: int = 50) -> list[tuple[str, bool]]:
+    """Return [(replacement_token, is_dir)] for filesystem entries matching the
+    token's basename, relative to its dir part (cwd when there is none).
+
+    The replacement keeps whatever directory prefix the user typed (including a
+    leading ``~/``) and appends a trailing ``/`` for directories.
+    """
+    expanded = os.path.expanduser(token)
+    target = os.path.dirname(expanded) or "."
+    prefix = os.path.basename(expanded)
+    try:
+        names = os.listdir(target)
+    except OSError:
+        return []
+    typed_dir = token[:len(token) - len(os.path.basename(token))]  # keeps ~/, ./, etc.
+    hide_hidden = not prefix.startswith(".")
+    out: list[tuple[str, bool]] = []
+    for name in names:
+        if hide_hidden and name.startswith("."):
+            continue
+        if not name.startswith(prefix):
+            continue
+        is_dir = os.path.isdir(os.path.join(target, name))
+        out.append((typed_dir + name + ("/" if is_dir else ""), is_dir))
+    out.sort(key=lambda t: (not t[1], t[0].lower()))   # directories first
+    return out[:limit]
+
+
 # ── Completer ────────────────────────────────────────────────────────────────
 if HAS_PROMPT_TOOLKIT:
 
@@ -157,6 +202,7 @@ if HAS_PROMPT_TOOLKIT:
         def get_completions(self, document, complete_event):  # type: ignore[override]
             text = document.text_before_cursor
             if not text.startswith("/"):
+                yield from self._path_completions(text, complete_event)
                 return
 
             meta = self._get_meta()
@@ -193,6 +239,29 @@ if HAS_PROMPT_TOOLKIT:
                     start_position=-len(partial),
                     display_meta=f"{cmd} subcommand",
                 )
+
+        def _path_completions(self, text, complete_event):
+            """Complete the token under the cursor as a filesystem path.
+
+            While typing, this only fires for path-like tokens (containing a
+            slash, or starting with ~ / .), so ordinary prose doesn't trigger a
+            menu. Pressing Tab (an explicit completion request) completes any
+            token as a path.
+            """
+            token = _path_token(text)
+            if not token:
+                return
+            requested = getattr(complete_event, "completion_requested", False)
+            if not (requested or _looks_like_path(token)):
+                return
+            for new_token, is_dir in _filesystem_completions(token):
+                yield Completion(
+                    new_token,
+                    start_position=-len(token),
+                    display=os.path.basename(new_token.rstrip("/")) + ("/" if is_dir else ""),
+                    display_meta="dir" if is_dir else "file",
+                )
+
 
 else:  # pragma: no cover — unreachable when prompt_toolkit is installed
     class SlashCompleter:
